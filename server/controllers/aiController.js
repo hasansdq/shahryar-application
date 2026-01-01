@@ -1,6 +1,11 @@
 import ai from '../config/ai.js';
 import { runWithTimeout, getLocalKnowledge, vectorSearchTool } from '../utils/helpers.js';
 
+// Helper to get today's date in Jalali for AI Context
+const getJalaliToday = () => {
+    return new Date().toLocaleDateString('fa-IR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+};
+
 export const chat = async (req, res) => {
     if (!ai) return res.status(500).json({ error: "AI not configured" });
     try {
@@ -96,13 +101,45 @@ export const analyzeProfile = async (req, res) => {
 export const generatePlanning = async (req, res) => {
     try {
         const { prompt, categories } = req.body;
+        const today = getJalaliToday();
+
+        const fullPrompt = `
+            Role: Expert Task Planner & Scheduler.
+            Context: The user is Iranian (Persian language).
+            Current Date: ${today} (Jalali/Shamsi).
+            
+            Available Categories: ${JSON.stringify(categories)}.
+            
+            User Request: "${prompt}"
+            
+            Mission:
+            1. Break down the user's request into specific, actionable tasks.
+            2. If the request implies a timeline (e.g., "schedule meetings for next week"), calculate specific Jalali dates relative to Today (${today}).
+            3. Assign the most appropriate 'categoryId' from the available list.
+            4. Write titles and descriptions in Persian.
+            
+            Output Schema (JSON Array):
+            [
+              {
+                "title": "Task Title (Persian)",
+                "description": "Detailed description (Persian)",
+                "date": "YYYY/MM/DD (Jalali Date)",
+                "categoryId": "Matching ID from available categories"
+              }
+            ]
+        `;
+
         const response = await runWithTimeout(ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Task planner (Jalali). Categories: ${JSON.stringify(categories)}. Input: "${prompt}". Output JSON Array.`,
+            contents: fullPrompt,
             config: { responseMimeType: 'application/json' }
         }));
+        
         res.json(JSON.parse(response.text || "[]"));
-    } catch (e) { res.status(500).json({ error: "Generation failed" }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ error: "Generation failed" }); 
+    }
 };
 
 export const generateHomeContent = async (req, res) => {
@@ -142,7 +179,25 @@ export const generateHomeContent = async (req, res) => {
             `;
         }
         else if (type === 'smart-task') {
-             prompt = `Convert "${input}" to task JSON (cat_todo, Jalali date).`;
+             const today = getJalaliToday();
+             prompt = `
+                Role: Smart Task Extractor.
+                Current Date: ${today} (Jalali).
+                User Input: "${input}"
+                
+                Mission:
+                1. Extract a single actionable task from the input.
+                2. Determine the deadline/date. If the user says "Tomorrow", "Next Week", etc., calculate the specific Jalali date based on Current Date. If no date is mentioned, use Current Date.
+                3. Create a Persian title and description.
+                
+                Output Schema (JSON Object):
+                {
+                    "title": "Task Title (Persian)",
+                    "description": "Details (Persian) - if implied in input, otherwise empty string",
+                    "date": "YYYY/MM/DD (Jalali)",
+                    "categoryId": "cat_todo"
+                }
+             `;
              config = { responseMimeType: 'application/json' };
         }
         
@@ -150,5 +205,8 @@ export const generateHomeContent = async (req, res) => {
         
         if (type === 'smart-task') res.json(JSON.parse(response.text || '{}'));
         else res.json({ text: response.text });
-    } catch (e) { res.status(500).json({ error: "Content failed" }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ error: "Content failed" }); 
+    }
 };
