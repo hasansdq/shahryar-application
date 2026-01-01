@@ -1,13 +1,27 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
+// Using the internal connection string provided for Railway
+const connectionString = 'postgresql://postgres:bGCpEGarvDCFPfAWAfcWJqeHzmfrjjAE@postgres.railway.internal:5432/railway';
+
 const pool = new Pool({
-  connectionString: 'postgresql://postgres:bGCpEGarvDCFPfAWAfcWJqeHzmfrjjAE@postgres.railway.internal:5432/railway',
+  connectionString: connectionString,
+  // Internal connections usually don't need SSL, but if forced, we set rejectUnauthorized to false.
+  // We keep it simple first. If strict SSL is required by the server config, uncomment the next line:
+  // ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 5000, // Fail fast if connection hangs
+});
+
+// Listener to catch errors on idle clients to prevent crashing
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle database client', err);
+  process.exit(-1);
 });
 
 export const initDB = async () => {
   try {
     const client = await pool.connect();
+    console.log("Successfully connected to PostgreSQL");
     
     // Users Table
     await client.query(`
@@ -65,7 +79,7 @@ export const initDB = async () => {
     console.log("PostgreSQL Tables Initialized Successfully.");
     client.release();
   } catch (err) {
-    console.error("Error initializing database:", err);
+    console.error("FATAL: Error initializing database:", err);
   }
 };
 

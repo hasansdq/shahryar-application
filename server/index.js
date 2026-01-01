@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { initDB } from './config/db.js';
@@ -14,7 +15,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // --- INITIALIZATION ---
-initDB();
+// Connect to DB immediately
+initDB().catch(err => {
+    console.error("Failed to initialize DB:", err);
+});
 
 // --- MIDDLEWARE ---
 app.use(cors({
@@ -38,11 +42,6 @@ app.use('/api', apiRoutes);
 
 // --- STATIC SERVING ---
 const buildPath = path.join(__dirname, '..', 'build');
-if (fs.existsSync(buildPath)) { // Note: 'fs' needs to be imported or handled safely
-    // Since we just split files, we need fs here for static serve check
-}
-// Better approach: Import fs at top
-import fs from 'fs';
 
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
