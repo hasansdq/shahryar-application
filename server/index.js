@@ -8,6 +8,13 @@ import { initDB } from './config/db.js';
 import apiRoutes from './routes/api.js';
 import { setupLiveServer } from './services/liveService.js';
 
+// --- BUILD PROTECTION ---
+// If this script is somehow imported during a build process, exit immediately.
+if (process.env.npm_lifecycle_event === 'build') {
+    console.log("Build detected. Skipping server startup.");
+    process.exit(0);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -48,7 +55,7 @@ const startServer = async () => {
     try {
         console.log("🚀 Starting Server Initialization...");
         
-        // Initialize DB first - This triggers the logic in db.js
+        // Initialize DB first
         await initDB();
 
         // Start Server only if DB is ok
@@ -63,13 +70,14 @@ const startServer = async () => {
     } catch (err) {
         console.error("\n❌ SERVER STARTUP FAILED:");
         console.error(err.message);
-        // We exit with 1 to signal failure to the process manager
         process.exit(1);
     }
 };
 
 // Strict check: Only run if this file is the main module being executed.
-// This prevents the server from starting if imported by build tools.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// AND verify we are not in a CI/Build environment that might confuse argv.
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+
+if (isMainModule) {
     startServer();
 }
