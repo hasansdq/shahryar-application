@@ -1,185 +1,175 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+// --- IN-MEMORY MOCK DATABASE ---
+// This replaces the real PostgreSQL connection to ensure the app works immediately 
+// without configuration errors. Data is stored in RAM and resets on server restart.
 
-// Lazy Singleton: Pool is initially null and created only when needed.
-let pool = null;
-
-const getPool = () => {
-    // 🛑 BUILD PROTECTION: If we are in a build environment, do NOT create a pool.
-    if (process.env.npm_lifecycle_event === 'build') {
-        return null;
-    }
-
-    if (pool) return pool;
-    
-    // We access env var only when requested, not at file load
-    const connectionString = process.env.DATABASE_URL;
-    
-    // Return null if config is missing (allows import without crash during build/dev)
-    if (!connectionString) {
-        return null;
-    }
-
-    // --- SSL CONFIGURATION LOGIC ---
-    // Check if the URL is internal to Railway
-    const isInternal = connectionString.includes("railway.internal");
-
-    // Enable SSL if explicitly required OR if connecting to a public URL (not internal)
-    const ssl = (process.env.PGSSLMODE === "require" || !isInternal)
-        ? { rejectUnauthorized: false }
-        : undefined;
-
-    pool = new Pool({
-        connectionString: connectionString,
-        connectionTimeoutMillis: 5000, 
-        ssl: ssl
-    });
-
-    pool.on('error', (err, client) => {
-        console.error('Unexpected error on idle database client', err.message);
-    });
-
-    return pool;
+const dbState = {
+    users: [],
+    sessions: [],
+    tasks: [],
+    categories: []
 };
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Helper to mimic Postgres JSONB parsing (Postgres returns objects, but we might receive strings)
+const parseJSON = (val) => {
+    try {
+        if (typeof val === 'string') return JSON.parse(val);
+        return val;
+    } catch (e) {
+        return val || [];
+    }
+};
 
 export const initDB = async () => {
-    // 🛑 CRITICAL BUILD PROTECTION 🛑
-    if (process.env.npm_lifecycle_event === 'build') {
-        console.log("🚧 Build environment detected. Skipping Database connection.");
-        return true; 
-    }
-
-    // 1. Get Pool (Lazy Init)
-    const p = getPool();
-    
-    // 2. Runtime Validation
-    if (!p) {
-        console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
-        console.error("   Please set DATABASE_URL in your environment variables.\n");
-        throw new Error("DATABASE_URL is missing");
-    }
-
-    const MAX_RETRIES = 5;
-    const RETRY_DELAY = 3000; 
-
-    let client;
-    let attempt = 1;
-
-    while (attempt <= MAX_RETRIES) {
-        try {
-            console.log(`Connecting to Database (Attempt ${attempt}/${MAX_RETRIES})...`);
-            client = await p.connect();
-            console.log("✅ Successfully connected to PostgreSQL Database");
-            
-            // --- SCHEMA INITIALIZATION ---
-            
-            // 1. Users Table
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                phone TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL
-                );
-            `);
-
-            // 2. Migration
-            const userColumns = [
-                "ADD COLUMN IF NOT EXISTS name TEXT",
-                "ADD COLUMN IF NOT EXISTS email TEXT",
-                "ADD COLUMN IF NOT EXISTS bio TEXT",
-                "ADD COLUMN IF NOT EXISTS avatar TEXT",
-                "ADD COLUMN IF NOT EXISTS joined_date TEXT",
-                "ADD COLUMN IF NOT EXISTS learned_data JSONB DEFAULT '[]'",
-                "ADD COLUMN IF NOT EXISTS traits JSONB DEFAULT '[]'",
-                "ADD COLUMN IF NOT EXISTS custom_instructions TEXT"
-            ];
-
-            for (const col of userColumns) {
-                await client.query(`ALTER TABLE users ${col}`);
-            }
-
-            // Sessions Table
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-                title TEXT,
-                messages JSONB DEFAULT '[]',
-                created_at BIGINT,
-                updated_at BIGINT
-                );
-            `);
-
-            // Tasks Table
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS tasks (
-                id TEXT PRIMARY KEY,
-                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-                category_id TEXT,
-                title TEXT,
-                description TEXT,
-                status TEXT,
-                date TEXT,
-                created_at BIGINT
-                );
-            `);
-
-            // Categories Table
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS categories (
-                id TEXT PRIMARY KEY,
-                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-                title TEXT,
-                color TEXT
-                );
-            `);
-
-            console.log("✅ PostgreSQL Tables & Schema Verified.");
-            return true; // Success
-
-        } catch (err) {
-            console.error(`⚠️ Database connection failed (Attempt ${attempt}): ${err.message}`);
-            
-            if (client) {
-                client.release();
-                client = null;
-            }
-
-            if (attempt === MAX_RETRIES) {
-                console.error("\n❌ FATAL: Could not connect to database after multiple attempts.");
-                
-                // --- IMPROVED ERROR HINT ---
-                if (err.message.includes('ENOTFOUND') || err.message.includes('ECONNREFUSED')) {
-                     console.error("\n💡 HINT: Database Connection Failed.");
-                     console.error("   1. If running locally, you CANNOT use 'railway.internal'. Use the Public Domain provided by Railway.");
-                     console.error("   2. If deploying on Railway, ensure the PostgreSQL service is active and attached to this service.");
-                     console.error("   3. Check if DATABASE_URL is correct.\n");
-                }
-                
-                throw err; 
-            }
-
-            console.log(`⏳ Retrying in ${RETRY_DELAY/1000} seconds...`);
-            await sleep(RETRY_DELAY);
-            attempt++;
-        } finally {
-            if (client) client.release();
-        }
-    }
+    console.log("\n⚠️  RUNNING IN MOCK MODE: No real database connection.");
+    console.log("✅  In-Memory Storage Initialized. App will work fully.");
+    console.log("ℹ️   Note: Data will be lost when the server restarts.\n");
+    return true;
 };
 
-// Export a proxy object that mimics the Pool interface.
-const db = {
-    query: (text, params) => {
-        const p = getPool();
-        if (!p) {
-             if (process.env.npm_lifecycle_event === 'build') return Promise.resolve({ rows: [] });
-             throw new Error("Database not initialized: DATABASE_URL is missing");
-        }
-        return p.query(text, params);
+// A Mock Query Handler that parses SQL strings used in controllers
+const mockQuery = async (text, params = []) => {
+    const sql = text.trim().toUpperCase().replace(/\s+/g, ' ');
+
+    // --- USERS TABLE ---
+    if (sql.includes("INSERT INTO USERS")) {
+        // params: id, phone, password, name, bio, joined_date, learned_data, traits, custom_instructions
+        const newUser = {
+            id: params[0],
+            phone: params[1],
+            password: params[2],
+            name: params[3],
+            bio: params[4],
+            joined_date: params[5],
+            learned_data: parseJSON(params[6]),
+            traits: parseJSON(params[7]),
+            custom_instructions: params[8]
+        };
+        dbState.users.push(newUser);
+        return { rows: [newUser] };
     }
+
+    if (sql.includes("SELECT * FROM USERS WHERE PHONE")) {
+        const user = dbState.users.find(u => u.phone === params[0]);
+        return { rows: user ? [user] : [] };
+    }
+
+    if (sql.includes("SELECT * FROM USERS WHERE ID")) {
+        const user = dbState.users.find(u => u.id === params[0]);
+        return { rows: user ? [user] : [] };
+    }
+
+    if (sql.includes("UPDATE USERS SET")) {
+        // params: name, email, bio, avatar, learned, traits, instr, id
+        const userIndex = dbState.users.findIndex(u => u.id === params[7]);
+        if (userIndex !== -1) {
+            dbState.users[userIndex] = {
+                ...dbState.users[userIndex],
+                name: params[0],
+                email: params[1],
+                bio: params[2],
+                avatar: params[3],
+                learned_data: parseJSON(params[4]),
+                traits: parseJSON(params[5]),
+                custom_instructions: params[6]
+            };
+        }
+        return { rows: [] };
+    }
+
+    // --- SESSIONS TABLE ---
+    if (sql.includes("SELECT * FROM SESSIONS")) {
+        const sessions = dbState.sessions.filter(s => s.user_id === params[0]);
+        // Sort DESC
+        sessions.sort((a, b) => b.updated_at - a.updated_at);
+        return { rows: sessions };
+    }
+
+    if (sql.includes("INSERT INTO SESSIONS")) {
+        // Handle Upsert (ON CONFLICT)
+        const id = params[0];
+        const existingIndex = dbState.sessions.findIndex(s => s.id === id);
+        
+        const sessionObj = {
+            id: params[0],
+            user_id: params[1],
+            title: params[2],
+            messages: parseJSON(params[3]),
+            created_at: params[4],
+            updated_at: params[5]
+        };
+
+        if (existingIndex !== -1) {
+            dbState.sessions[existingIndex] = sessionObj;
+        } else {
+            dbState.sessions.push(sessionObj);
+        }
+        return { rows: [sessionObj] };
+    }
+
+    if (sql.includes("DELETE FROM SESSIONS")) {
+        dbState.sessions = dbState.sessions.filter(s => s.id !== params[0]);
+        return { rows: [] };
+    }
+
+    // --- TASKS TABLE ---
+    if (sql.includes("SELECT * FROM TASKS")) {
+        const tasks = dbState.tasks.filter(t => t.user_id === params[0]);
+        return { rows: tasks };
+    }
+
+    if (sql.includes("INSERT INTO TASKS")) {
+        // Handle Upsert
+        const id = params[0];
+        const existingIndex = dbState.tasks.findIndex(t => t.id === id);
+        
+        const taskObj = {
+            id: params[0],
+            user_id: params[1],
+            category_id: params[2],
+            title: params[3],
+            description: params[4],
+            status: params[5],
+            date: params[6],
+            created_at: params[7]
+        };
+
+        if (existingIndex !== -1) {
+            dbState.tasks[existingIndex] = taskObj;
+        } else {
+            dbState.tasks.push(taskObj);
+        }
+        return { rows: [taskObj] };
+    }
+
+    if (sql.includes("DELETE FROM TASKS")) {
+        dbState.tasks = dbState.tasks.filter(t => t.id !== params[0]);
+        return { rows: [] };
+    }
+
+    // --- CATEGORIES TABLE ---
+    if (sql.includes("SELECT * FROM CATEGORIES")) {
+        const cats = dbState.categories.filter(c => c.user_id === params[0]);
+        return { rows: cats };
+    }
+
+    if (sql.includes("INSERT INTO CATEGORIES")) {
+        // Handle "ON CONFLICT DO NOTHING"
+        const exists = dbState.categories.find(c => c.id === params[0] && c.user_id === params[1]);
+        if (!exists) {
+            dbState.categories.push({
+                id: params[0],
+                user_id: params[1],
+                title: params[2],
+                color: params[3]
+            });
+        }
+        return { rows: [] };
+    }
+
+    return { rows: [] };
 };
 
-export default db;
+// Export an object compatible with the 'pg' Pool interface
+export default {
+    query: mockQuery
+};

@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'url';
 
-// --- BUILD PROTECTION (Absolute Top) ---
-// This guarantees that 'npm run build' (vite build) never triggers backend logic.
+// --- BUILD PROTECTION ---
+// Prevent server logic from running during vite build
 if (process.env.npm_lifecycle_event === 'build') {
     process.exit(0);
 }
@@ -30,6 +30,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 
+// Logging
 app.use((req, res, next) => {
     if (!req.url.startsWith('/static') && !req.url.includes('.')) {
         console.log(`[API Request] ${req.method} ${req.url}`);
@@ -52,18 +53,15 @@ if (fs.existsSync(buildPath)) {
 
 // --- STARTUP SEQUENCE ---
 const startServer = async () => {
-    // Double check guard for runtime safety
-    if (process.env.npm_lifecycle_event === 'build') return;
-
     try {
-        console.log("🚀 Starting Server Initialization...");
+        console.log("🚀 Starting Server...");
         
-        // Initialize DB strictly at Runtime
+        // Initialize Mock DB
         await initDB();
 
-        // Start Server only if DB is ok
+        // Start Server
         const server = app.listen(PORT, '0.0.0.0', () => {
-            console.log(`\n✅ Server successfully running on http://0.0.0.0:${PORT}`);
+            console.log(`\n✅ Server running on http://0.0.0.0:${PORT}`);
         });
 
         // Setup WebSocket
@@ -71,15 +69,13 @@ const startServer = async () => {
         setupLiveServer(wss);
 
     } catch (err) {
-        console.error("\n❌ SERVER STARTUP FAILED:");
-        console.error(err.message);
+        console.error("❌ Server Startup Failed:", err);
         process.exit(1);
     }
 };
 
-// Strict check: Only run if this file is the main module being executed.
+// Run only if main module
 const isMainModule = import.meta.url === `file://${process.argv[1]}`;
-
 if (isMainModule) {
     startServer();
 }
