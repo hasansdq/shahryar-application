@@ -1,19 +1,20 @@
+import { fileURLToPath } from 'url';
+
+// --- BUILD PROTECTION (Absolute Top) ---
+// If this script is imported during a build process, exit immediately with Success (0).
+// This ensures the build pipeline doesn't hang or crash due to backend logic.
+if (process.env.npm_lifecycle_event === 'build') {
+    process.exit(0);
+}
+
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { initDB } from './config/db.js';
 import apiRoutes from './routes/api.js';
 import { setupLiveServer } from './services/liveService.js';
-
-// --- BUILD PROTECTION ---
-// If this script is somehow imported during a build process, exit immediately.
-if (process.env.npm_lifecycle_event === 'build') {
-    console.log("Build detected. Skipping server startup.");
-    process.exit(0);
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,6 +53,9 @@ if (fs.existsSync(buildPath)) {
 
 // --- STARTUP SEQUENCE ---
 const startServer = async () => {
+    // Double check guard
+    if (process.env.npm_lifecycle_event === 'build') return;
+
     try {
         console.log("🚀 Starting Server Initialization...");
         
@@ -75,7 +79,6 @@ const startServer = async () => {
 };
 
 // Strict check: Only run if this file is the main module being executed.
-// AND verify we are not in a CI/Build environment that might confuse argv.
 const isMainModule = import.meta.url === `file://${process.argv[1]}`;
 
 if (isMainModule) {

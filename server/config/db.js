@@ -5,12 +5,17 @@ const { Pool } = pkg;
 let pool = null;
 
 const getPool = () => {
+    // SAFETY CHECK: If we are in a build environment, do NOT create a pool.
+    if (process.env.npm_lifecycle_event === 'build') {
+        return null;
+    }
+
     if (pool) return pool;
     
     // We access env var only when requested, not at file load
     const connectionString = process.env.DATABASE_URL;
     
-    // Return null if config is missing (allows import without crash)
+    // Return null if config is missing (allows import without crash during build/dev)
     if (!connectionString) {
         return null;
     }
@@ -33,13 +38,24 @@ const getPool = () => {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const initDB = async () => {
+    // 🛑 CRITICAL BUILD PROTECTION 🛑
+    // If this is running as part of the build script, return immediately.
+    // This prevents the connection logic from firing and failing due to network restrictions.
+    if (process.env.npm_lifecycle_event === 'build') {
+        console.log("🚧 Build environment detected. Skipping Database connection.");
+        return true; 
+    }
+
     // 1. Get Pool (Lazy Init)
     const p = getPool();
     
     // 2. Runtime Validation
+    // If p is null here, it means either we are in build mode (handled above) 
+    // or DATABASE_URL is missing in a runtime environment (which is a fatal error).
     if (!p) {
         console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
         console.error("   Please set DATABASE_URL in your environment variables.\n");
+        // We throw here only if we are SURE we are at runtime (handled by the check above)
         throw new Error("DATABASE_URL is missing");
     }
 
@@ -150,11 +166,14 @@ export const initDB = async () => {
 };
 
 // Export a proxy object that mimics the Pool interface.
-// This ensures that importing this file does NOT create a Pool instance immediately.
 const db = {
     query: (text, params) => {
         const p = getPool();
-        if (!p) throw new Error("Database not initialized: DATABASE_URL is missing");
+        if (!p) {
+             // If called during build, just return a dummy promise to prevent crash
+             if (process.env.npm_lifecycle_event === 'build') return Promise.resolve({ rows: [] });
+             throw new Error("Database not initialized: DATABASE_URL is missing");
+        }
         return p.query(text, params);
     }
 };
