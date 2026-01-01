@@ -1,11 +1,11 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
-// We do NOT validate or exit here. This allows the file to be imported 
-// without side effects (like crashing) if env vars are missing during build.
+// Allow the module to load even if env vars are missing (e.g. during build).
+// Validations happen inside initDB() at runtime.
 const connectionString = process.env.DATABASE_URL;
 
-// Create pool lazily or allows it to be created with undefined (will fail only on connect)
+// We do NOT call pool.connect() here. We just define the pool.
 const pool = new Pool({
   connectionString: connectionString,
   connectionTimeoutMillis: 5000, 
@@ -16,7 +16,6 @@ const pool = new Pool({
 
 // Suppress unhandled error on idle clients to prevent random crashes
 pool.on('error', (err, client) => {
-  // Just log it, don't crash. The query attempts will handle the errors.
   console.error('Unexpected error on idle database client', err.message);
 });
 
@@ -24,12 +23,11 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const initDB = async () => {
   // --- RUNTIME VALIDATION ---
-  // This logic now runs ONLY when server starts, not during build.
+  // This runs ONLY when startServer() calls initDB(), effectively Runtime only.
   if (!connectionString) {
       console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
       console.error("   Please set DATABASE_URL in your environment variables.\n");
-      // Only exit the process if we are actually trying to start the DB
-      process.exit(1);
+      throw new Error("DATABASE_URL is missing");
   }
 
   const MAX_RETRIES = 5;
@@ -127,7 +125,6 @@ export const initDB = async () => {
              console.error("         If deploying, ensure the PostgreSQL service is active.\n");
         }
         
-        // Throwing here allows index.js to handle the exit gracefully
         throw err; 
       }
 

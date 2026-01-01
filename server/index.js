@@ -63,16 +63,13 @@ const startServer = async () => {
     } catch (err) {
         console.error("\n❌ SERVER STARTUP FAILED:");
         console.error(err.message);
-        console.error("The process will now exit to allow for a restart/retry.\n");
+        // We exit with 1 to signal failure to the process manager
         process.exit(1);
     }
 };
 
-// Only start the server if this file is the main entry point (prevents double start in some setups)
+// Strict check: Only run if this file is the main module being executed.
+// This prevents the server from starting if imported by build tools.
 if (import.meta.url === `file://${process.argv[1]}`) {
     startServer();
-} else {
-    // Allows importing app for testing without starting server
-    // But calls startServer for standard node execution
-    startServer(); 
 }
