@@ -1,33 +1,39 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
+// We do NOT validate or exit here. This allows the file to be imported 
+// without side effects (like crashing) if env vars are missing during build.
 const connectionString = process.env.DATABASE_URL;
 
-// --- VALIDATION & GUIDANCE ---
-if (!connectionString) {
-  console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
-  console.error("   Please set DATABASE_URL in your environment variables.\n");
-  process.exit(1);
-}
-
-// Configuration for connection pool
+// Create pool lazily or allows it to be created with undefined (will fail only on connect)
 const pool = new Pool({
   connectionString: connectionString,
-  connectionTimeoutMillis: 5000, // Reduced timeout per attempt since we have retries
+  connectionTimeoutMillis: 5000, 
   ssl: {
-    rejectUnauthorized: false // Necessary for both Railway Internal and Public connections
+    rejectUnauthorized: false
   }
 });
 
+// Suppress unhandled error on idle clients to prevent random crashes
 pool.on('error', (err, client) => {
-  console.error('Unexpected error on idle database client', err);
+  // Just log it, don't crash. The query attempts will handle the errors.
+  console.error('Unexpected error on idle database client', err.message);
 });
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const initDB = async () => {
+  // --- RUNTIME VALIDATION ---
+  // This logic now runs ONLY when server starts, not during build.
+  if (!connectionString) {
+      console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
+      console.error("   Please set DATABASE_URL in your environment variables.\n");
+      // Only exit the process if we are actually trying to start the DB
+      process.exit(1);
+  }
+
   const MAX_RETRIES = 5;
-  const RETRY_DELAY = 3000; // 3 seconds
+  const RETRY_DELAY = 3000; 
 
   let client;
   let attempt = 1;
@@ -49,7 +55,7 @@ export const initDB = async () => {
         );
       `);
 
-      // 2. Migration: Add columns if they don't exist
+      // 2. Migration
       const userColumns = [
           "ADD COLUMN IF NOT EXISTS name TEXT",
           "ADD COLUMN IF NOT EXISTS email TEXT",
@@ -115,13 +121,14 @@ export const initDB = async () => {
       if (attempt === MAX_RETRIES) {
         console.error("\n❌ FATAL: Could not connect to database after multiple attempts.");
         
-        // Specific hint for ENOTFOUND
         if (err.message.includes('ENOTFOUND') && connectionString.includes('railway.internal')) {
-             console.error("\n💡 HINT: If you are running locally, you CANNOT use 'railway.internal'. Use the Public URL.");
-             console.error("         If you are deploying on Railway, the Database service might be down or restarting.\n");
+             console.error("\n💡 HINT: 'railway.internal' hosts are only accessible from INSIDE Railway.");
+             console.error("         If you are running this locally, use the Public Domain provided by Railway.");
+             console.error("         If deploying, ensure the PostgreSQL service is active.\n");
         }
         
-        throw err; // Final failure, crash the app
+        // Throwing here allows index.js to handle the exit gracefully
+        throw err; 
       }
 
       console.log(`⏳ Retrying in ${RETRY_DELAY/1000} seconds...`);

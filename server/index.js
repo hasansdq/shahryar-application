@@ -46,14 +46,14 @@ if (fs.existsSync(buildPath)) {
 // --- STARTUP SEQUENCE ---
 const startServer = async () => {
     try {
-        // Initialize DB first
+        console.log("🚀 Starting Server Initialization...");
+        
+        // Initialize DB first - This triggers the logic in db.js
         await initDB();
 
         // Start Server only if DB is ok
         const server = app.listen(PORT, '0.0.0.0', () => {
-            console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
-            console.log("   - API: Ready");
-            console.log("   - DB: Connected\n");
+            console.log(`\n✅ Server successfully running on http://0.0.0.0:${PORT}`);
         });
 
         // Setup WebSocket
@@ -61,9 +61,18 @@ const startServer = async () => {
         setupLiveServer(wss);
 
     } catch (err) {
-        console.error("❌ Server failed to start due to Database Error.");
+        console.error("\n❌ SERVER STARTUP FAILED:");
+        console.error(err.message);
+        console.error("The process will now exit to allow for a restart/retry.\n");
         process.exit(1);
     }
 };
 
-startServer();
+// Only start the server if this file is the main entry point (prevents double start in some setups)
+if (import.meta.url === `file://${process.argv[1]}`) {
+    startServer();
+} else {
+    // Allows importing app for testing without starting server
+    // But calls startServer for standard node execution
+    startServer(); 
+}
