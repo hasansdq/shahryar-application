@@ -49,12 +49,25 @@ export const Home: React.FC<HomeProps> = ({ user, onChangeView }) => {
   const [smartTaskInput, setSmartTaskInput] = useState('');
   const [smartTaskLoading, setSmartTaskLoading] = useState(false);
 
-  // Helper to get context
+  // Helper to get context - IMPROVED FOR PERSONALIZATION
   const getUserContext = async () => {
     const tasks = await storageService.getTasks(user.id);
     const sessions = await storageService.getSessions(user.id);
-    const recentChats = sessions.slice(0, 3).flatMap(s => s.messages.slice(-3)).map(m => m.text).join(' | ');
-    const pendingTasks = tasks.filter(t => t.status === 'todo').map(t => t.title).join(', ');
+    
+    // Extract meaningful chat history (last 5 messages from recent sessions)
+    const recentChats = sessions
+        .slice(0, 2)
+        .flatMap(s => s.messages.slice(-3))
+        .filter(m => m.role === 'user' && m.text.length > 5) // Only user messages that have substance
+        .map(m => m.text)
+        .join(' | ');
+
+    // Extract pending tasks with dates
+    const pendingTasks = tasks
+        .filter(t => t.status === 'todo')
+        .map(t => `${t.title} (تاریخ: ${t.date})`)
+        .join(', ');
+
     return { tasks: pendingTasks, chats: recentChats };
   };
 

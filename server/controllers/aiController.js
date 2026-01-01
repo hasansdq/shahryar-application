@@ -6,15 +6,31 @@ export const chat = async (req, res) => {
     try {
         const { history, user, tasks } = req.body; 
         const today = new Date().toLocaleDateString('fa-IR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        const tasksSummary = tasks ? tasks.map(t => `- ${t.title} (${t.status}, ${t.date})`).join('\n') : 'هیچ';
+        
+        // Enhance task summary to be more descriptive for the AI
+        const tasksSummary = tasks && tasks.length > 0
+            ? tasks.map(t => {
+                const statusMap = { 'todo': 'انجام نشده', 'in-progress': 'در حال انجام', 'done': 'انجام شده' };
+                return `- عنوان: ${t.title} | وضعیت: ${statusMap[t.status] || t.status} | تاریخ: ${t.date}`;
+              }).join('\n') 
+            : 'کاربر وظیفه ثبت شده‌ای ندارد.';
 
         const systemInstruction = `
-          شما "شهریار" هستید، هوش مصنوعی بومی رفسنجان.
-          تاریخ: ${today}.
-          دستورالعمل کاربر: ${user.customInstructions || 'ندارد'}
-          اخبار: استفاده از googleSearch.
-          اطلاعات محلی: استفاده از search_knowledge_base.
-          وظایف کاربر: ${tasksSummary}
+          شما "شهریار" هستید، هوش مصنوعی بومی و دستیار شخصی کاربر در شهر رفسنجان.
+          تاریخ امروز: ${today}.
+          
+          اطلاعات کاربر:
+          - نام: ${user.name}
+          - دستورالعمل‌های سفارشی کاربر: ${user.customInstructions || 'ندارد'}
+          
+          وضعیت وظایف و برنامه‌های کاربر (شما به این لیست کاملا آگاه هستید):
+          ${tasksSummary}
+          
+          دستورالعمل‌های اصلی:
+          1. شما به سوابق چت و وظایف کاربر آگاه هستید. در پاسخ‌هایتان در صورت لزوم به وظایف کاربر (چه انجام شده و چه باقی‌مانده) اشاره کنید.
+          2. برای اخبار از ابزار googleSearch استفاده کنید.
+          3. برای اطلاعات محلی رفسنجان از ابزار search_knowledge_base استفاده کنید.
+          4. لحن شما باید دوستانه، محترمانه و کمک‌کننده باشد.
         `;
 
         let currentHistory = [...history];
@@ -93,13 +109,30 @@ export const generateHomeContent = async (req, res) => {
     try {
         const { tasks, chats, type, input } = req.body; 
         let prompt = "", config = {};
-        if (type === 'suggestion') prompt = `Based on [${tasks}] and [${chats}], short friendly Persian suggestion.`;
-        else if (type === 'fact') prompt = `Short interesting fact about Rafsanjan in Persian.`;
-        else if (type === 'notification') prompt = `Urgent/motivating notification based on [${tasks}]. Persian.`;
+        
+        if (type === 'suggestion') {
+            // Highly specific prompt for short, personalized suggestions
+            prompt = `
+                Context:
+                User's Pending Tasks: [${tasks}]
+                Recent Chat Topics: [${chats}]
+                
+                Task: Generate a daily suggestion in Persian.
+                Constraints:
+                1. MUST be extremely short (Maximum 20 words / 1-2 lines).
+                2. MUST be personalized based on the tasks or chat history provided above.
+                3. If there are tasks, encourage finishing specific ones. If no tasks, suggest something based on chat topics.
+                4. Tone: Energetic and friendly.
+                5. Do NOT use hashtags.
+            `;
+        }
+        else if (type === 'fact') prompt = `Short interesting fact about Rafsanjan in Persian. Max 1 sentence.`;
+        else if (type === 'notification') prompt = `Urgent/motivating notification based on [${tasks}]. Persian. Keep it concise.`;
         else if (type === 'smart-task') {
              prompt = `Convert "${input}" to task JSON (cat_todo, Jalali date).`;
              config = { responseMimeType: 'application/json' };
         }
+        
         const response = await runWithTimeout(ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt, config }));
         
         if (type === 'smart-task') res.json(JSON.parse(response.text || '{}'));
