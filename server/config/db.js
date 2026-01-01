@@ -16,15 +16,12 @@ if (!connectionString) {
 
 const pool = new Pool({
   connectionString: connectionString,
-  connectionTimeoutMillis: 10000, // Allow more time for initial connection
-  // Railway and most cloud providers require SSL for external connections.
-  // rejectUnauthorized: false is often needed for self-signed certs in PaaS environments.
+  connectionTimeoutMillis: 10000,
   ssl: {
     rejectUnauthorized: false
   }
 });
 
-// Listener to catch errors on idle clients to prevent crashing
 pool.on('error', (err, client) => {
   console.error('Unexpected error on idle database client', err);
   process.exit(-1);
@@ -36,22 +33,31 @@ export const initDB = async () => {
     client = await pool.connect();
     console.log("✅ Successfully connected to PostgreSQL Database");
     
-    // Users Table
+    // 1. Users Table (Create if not exists - Basic Structure)
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         phone TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        name TEXT,
-        email TEXT,
-        bio TEXT,
-        avatar TEXT,
-        joined_date TEXT,
-        learned_data JSONB DEFAULT '[]',
-        traits JSONB DEFAULT '[]',
-        custom_instructions TEXT
+        password TEXT NOT NULL
       );
     `);
+
+    // 2. Users Table Schema Update (Ensure all columns exist for existing tables)
+    // This acts as a basic migration system to fix "column does not exist" errors
+    const userColumns = [
+        "ADD COLUMN IF NOT EXISTS name TEXT",
+        "ADD COLUMN IF NOT EXISTS email TEXT",
+        "ADD COLUMN IF NOT EXISTS bio TEXT",
+        "ADD COLUMN IF NOT EXISTS avatar TEXT",
+        "ADD COLUMN IF NOT EXISTS joined_date TEXT",
+        "ADD COLUMN IF NOT EXISTS learned_data JSONB DEFAULT '[]'",
+        "ADD COLUMN IF NOT EXISTS traits JSONB DEFAULT '[]'",
+        "ADD COLUMN IF NOT EXISTS custom_instructions TEXT"
+    ];
+
+    for (const col of userColumns) {
+        await client.query(`ALTER TABLE users ${col}`);
+    }
 
     // Sessions Table
     await client.query(`
@@ -89,7 +95,7 @@ export const initDB = async () => {
       );
     `);
 
-    console.log("✅ PostgreSQL Tables Initialized/Verified.");
+    console.log("✅ PostgreSQL Tables & Schema Verified.");
   } catch (err) {
     console.error("❌ FATAL: Error initializing database:", err);
   } finally {
