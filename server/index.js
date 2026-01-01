@@ -14,12 +14,6 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- INITIALIZATION ---
-// Connect to DB immediately
-initDB().catch(err => {
-    console.error("Failed to initialize DB:", err);
-});
-
 // --- MIDDLEWARE ---
 app.use(cors({
     origin: '*',
@@ -29,7 +23,6 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 
-// Logging
 app.use((req, res, next) => {
     if (!req.url.startsWith('/static') && !req.url.includes('.')) {
         console.log(`[API Request] ${req.method} ${req.url}`);
@@ -42,7 +35,6 @@ app.use('/api', apiRoutes);
 
 // --- STATIC SERVING ---
 const buildPath = path.join(__dirname, '..', 'build');
-
 if (fs.existsSync(buildPath)) {
     app.use(express.static(buildPath));
     app.get('*', (req, res) => {
@@ -51,11 +43,27 @@ if (fs.existsSync(buildPath)) {
     });
 }
 
-// --- START SERVER ---
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-});
+// --- STARTUP SEQUENCE ---
+const startServer = async () => {
+    try {
+        // Initialize DB first
+        await initDB();
 
-// --- WEBSOCKET SERVER ---
-const wss = new WebSocketServer({ server });
-setupLiveServer(wss);
+        // Start Server only if DB is ok
+        const server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
+            console.log("   - API: Ready");
+            console.log("   - DB: Connected\n");
+        });
+
+        // Setup WebSocket
+        const wss = new WebSocketServer({ server });
+        setupLiveServer(wss);
+
+    } catch (err) {
+        console.error("❌ Server failed to start due to Database Error.");
+        process.exit(1);
+    }
+};
+
+startServer();

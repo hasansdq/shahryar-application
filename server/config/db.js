@@ -1,17 +1,20 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
-// Get connection string strictly from environment variables
 const connectionString = process.env.DATABASE_URL;
 
-// Fail fast if DATABASE_URL is missing
+// --- VALIDATION & GUIDANCE ---
 if (!connectionString) {
-  console.error("------------------------------------------------------------------");
-  console.error("❌ FATAL ERROR: DATABASE_URL environment variable is undefined.");
-  console.error("   - If running locally: Add DATABASE_URL to your .env file or environment.");
-  console.error("   - If on Railway: Ensure the PostgreSQL service is connected.");
-  console.error("------------------------------------------------------------------");
+  console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
+  console.error("   Please set DATABASE_URL in your environment variables.\n");
   process.exit(1);
+}
+
+// Check for common mistake: Using internal URL locally
+if (connectionString.includes('railway.internal') && !process.env.RAILWAY_ENVIRONMENT) {
+  console.warn("\n⚠️  WARNING: You seem to be using a Railway Internal URL ('railway.internal') locally.");
+  console.warn("   This usually fails with ENOTFOUND because it's not accessible outside Railway.");
+  console.warn("   SOLUTION: Use the 'Public Networking' URL from Railway (usually ends with .rlwy.net)\n");
 }
 
 const pool = new Pool({
@@ -24,7 +27,6 @@ const pool = new Pool({
 
 pool.on('error', (err, client) => {
   console.error('Unexpected error on idle database client', err);
-  process.exit(-1);
 });
 
 export const initDB = async () => {
@@ -33,7 +35,7 @@ export const initDB = async () => {
     client = await pool.connect();
     console.log("✅ Successfully connected to PostgreSQL Database");
     
-    // 1. Users Table (Create if not exists - Basic Structure)
+    // 1. Users Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -42,8 +44,7 @@ export const initDB = async () => {
       );
     `);
 
-    // 2. Users Table Schema Update (Ensure all columns exist for existing tables)
-    // This acts as a basic migration system to fix "column does not exist" errors
+    // 2. Migration: Add columns if they don't exist
     const userColumns = [
         "ADD COLUMN IF NOT EXISTS name TEXT",
         "ADD COLUMN IF NOT EXISTS email TEXT",
@@ -96,8 +97,14 @@ export const initDB = async () => {
     `);
 
     console.log("✅ PostgreSQL Tables & Schema Verified.");
+    return true; // Success indicator
   } catch (err) {
-    console.error("❌ FATAL: Error initializing database:", err);
+    console.error("\n❌ FATAL DATABASE CONNECTION ERROR:");
+    console.error(err.message);
+    if (err.message.includes('ENOTFOUND') && connectionString.includes('railway.internal')) {
+        console.error("\n💡 HINT: You are using an internal Railway URL locally. Please replace DATABASE_URL with the Public URL from Railway dashboard.\n");
+    }
+    throw err; // Propagate error to stop server start
   } finally {
     if (client) client.release();
   }
