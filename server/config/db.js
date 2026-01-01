@@ -5,7 +5,7 @@ const { Pool } = pkg;
 let pool = null;
 
 const getPool = () => {
-    // SAFETY CHECK: If we are in a build environment, do NOT create a pool.
+    // 🛑 BUILD PROTECTION: If we are in a build environment, do NOT create a pool.
     if (process.env.npm_lifecycle_event === 'build') {
         return null;
     }
@@ -20,12 +20,19 @@ const getPool = () => {
         return null;
     }
 
+    // --- SSL CONFIGURATION LOGIC ---
+    // Check if the URL is internal to Railway
+    const isInternal = connectionString.includes("railway.internal");
+
+    // Enable SSL if explicitly required OR if connecting to a public URL (not internal)
+    const ssl = (process.env.PGSSLMODE === "require" || !isInternal)
+        ? { rejectUnauthorized: false }
+        : undefined;
+
     pool = new Pool({
         connectionString: connectionString,
         connectionTimeoutMillis: 5000, 
-        ssl: {
-            rejectUnauthorized: false
-        }
+        ssl: ssl
     });
 
     pool.on('error', (err, client) => {
@@ -39,8 +46,6 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const initDB = async () => {
     // 🛑 CRITICAL BUILD PROTECTION 🛑
-    // If this is running as part of the build script, return immediately.
-    // This prevents the connection logic from firing and failing due to network restrictions.
     if (process.env.npm_lifecycle_event === 'build') {
         console.log("🚧 Build environment detected. Skipping Database connection.");
         return true; 
@@ -50,12 +55,9 @@ export const initDB = async () => {
     const p = getPool();
     
     // 2. Runtime Validation
-    // If p is null here, it means either we are in build mode (handled above) 
-    // or DATABASE_URL is missing in a runtime environment (which is a fatal error).
     if (!p) {
         console.error("\n❌ FATAL ERROR: DATABASE_URL is missing.");
         console.error("   Please set DATABASE_URL in your environment variables.\n");
-        // We throw here only if we are SURE we are at runtime (handled by the check above)
         throw new Error("DATABASE_URL is missing");
     }
 
@@ -148,9 +150,12 @@ export const initDB = async () => {
             if (attempt === MAX_RETRIES) {
                 console.error("\n❌ FATAL: Could not connect to database after multiple attempts.");
                 
-                if (err.message.includes('ENOTFOUND') && process.env.DATABASE_URL?.includes('railway.internal')) {
-                    console.error("\n💡 HINT: 'railway.internal' hosts are only accessible from INSIDE Railway.");
-                    console.error("         If deploying, ensure the PostgreSQL service is active.");
+                // --- IMPROVED ERROR HINT ---
+                if (err.message.includes('ENOTFOUND') || err.message.includes('ECONNREFUSED')) {
+                     console.error("\n💡 HINT: Database Connection Failed.");
+                     console.error("   1. If running locally, you CANNOT use 'railway.internal'. Use the Public Domain provided by Railway.");
+                     console.error("   2. If deploying on Railway, ensure the PostgreSQL service is active and attached to this service.");
+                     console.error("   3. Check if DATABASE_URL is correct.\n");
                 }
                 
                 throw err; 
@@ -170,7 +175,6 @@ const db = {
     query: (text, params) => {
         const p = getPool();
         if (!p) {
-             // If called during build, just return a dummy promise to prevent crash
              if (process.env.npm_lifecycle_event === 'build') return Promise.resolve({ rows: [] });
              throw new Error("Database not initialized: DATABASE_URL is missing");
         }

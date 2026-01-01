@@ -1,8 +1,7 @@
 import { fileURLToPath } from 'url';
 
 // --- BUILD PROTECTION (Absolute Top) ---
-// If this script is imported during a build process, exit immediately with Success (0).
-// This ensures the build pipeline doesn't hang or crash due to backend logic.
+// This guarantees that 'npm run build' (vite build) never triggers backend logic.
 if (process.env.npm_lifecycle_event === 'build') {
     process.exit(0);
 }
@@ -53,13 +52,13 @@ if (fs.existsSync(buildPath)) {
 
 // --- STARTUP SEQUENCE ---
 const startServer = async () => {
-    // Double check guard
+    // Double check guard for runtime safety
     if (process.env.npm_lifecycle_event === 'build') return;
 
     try {
         console.log("🚀 Starting Server Initialization...");
         
-        // Initialize DB first
+        // Initialize DB strictly at Runtime
         await initDB();
 
         // Start Server only if DB is ok
