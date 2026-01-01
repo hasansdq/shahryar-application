@@ -111,7 +111,6 @@ export const generateHomeContent = async (req, res) => {
         let prompt = "", config = {};
         
         if (type === 'suggestion') {
-            // Highly specific prompt for short, personalized suggestions
             prompt = `
                 Context:
                 User's Pending Tasks: [${tasks}]
@@ -121,13 +120,27 @@ export const generateHomeContent = async (req, res) => {
                 Constraints:
                 1. MUST be extremely short (Maximum 20 words / 1-2 lines).
                 2. MUST be personalized based on the tasks or chat history provided above.
-                3. If there are tasks, encourage finishing specific ones. If no tasks, suggest something based on chat topics.
-                4. Tone: Energetic and friendly.
-                5. Do NOT use hashtags.
+                3. Tone: Energetic and friendly.
+                4. Do NOT use hashtags.
             `;
         }
         else if (type === 'fact') prompt = `Short interesting fact about Rafsanjan in Persian. Max 1 sentence.`;
-        else if (type === 'notification') prompt = `Urgent/motivating notification based on [${tasks}]. Persian. Keep it concise.`;
+        else if (type === 'notification') {
+            prompt = `
+                نقش: دستیار هوشمند شخصی.
+                اطلاعات ورودی:
+                - لیست کارهای کاربر: [${tasks || 'لیست خالی'}]
+                - سابقه صحبت‌های اخیر: [${chats || 'بدون سابقه'}]
+
+                ماموریت: نوشتن یک پیام نوتیفیکیشن هوشمند و شخصی‌سازی شده.
+                
+                قوانین حیاتی (باید رعایت شوند):
+                1. زبان: **فقط و فقط فارسی**.
+                2. طول متن: **دقیقا بین ۳۵ تا ۴۵ کلمه**. (خیلی کوتاه نباشد، خیلی طولانی نباشد).
+                3. محتوا: با توجه به کارهای عقب‌افتاده کاربر یا موضوعاتی که اخیرا درباره‌شان صحبت کرده، یک تحلیل یا پیشنهاد هوشمندانه بده. اگر کاری ندارد، یک پیشنهاد برای استراحت یا یادگیری بده.
+                4. لحن: صمیمی، دلسوزانه و انگیزشی. از سلام و احوال‌پرسی کلیشه‌ای پرهیز کن و مستقیم سر اصل مطلب برو.
+            `;
+        }
         else if (type === 'smart-task') {
              prompt = `Convert "${input}" to task JSON (cat_todo, Jalali date).`;
              config = { responseMimeType: 'application/json' };
