@@ -1,15 +1,27 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
-// Using the internal connection string provided for Railway
-const connectionString = 'postgresql://postgres:bGCpEGarvDCFPfAWAfcWJqeHzmfrjjAE@postgres.railway.internal:5432/railway';
+// Get connection string strictly from environment variables
+const connectionString = process.env.DATABASE_URL;
+
+// Fail fast if DATABASE_URL is missing
+if (!connectionString) {
+  console.error("------------------------------------------------------------------");
+  console.error("❌ FATAL ERROR: DATABASE_URL environment variable is undefined.");
+  console.error("   - If running locally: Add DATABASE_URL to your .env file or environment.");
+  console.error("   - If on Railway: Ensure the PostgreSQL service is connected.");
+  console.error("------------------------------------------------------------------");
+  process.exit(1);
+}
 
 const pool = new Pool({
   connectionString: connectionString,
-  // Internal connections usually don't need SSL, but if forced, we set rejectUnauthorized to false.
-  // We keep it simple first. If strict SSL is required by the server config, uncomment the next line:
-  // ssl: { rejectUnauthorized: false },
-  connectionTimeoutMillis: 5000, // Fail fast if connection hangs
+  connectionTimeoutMillis: 10000, // Allow more time for initial connection
+  // Railway and most cloud providers require SSL for external connections.
+  // rejectUnauthorized: false is often needed for self-signed certs in PaaS environments.
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 // Listener to catch errors on idle clients to prevent crashing
@@ -19,9 +31,10 @@ pool.on('error', (err, client) => {
 });
 
 export const initDB = async () => {
+  let client;
   try {
-    const client = await pool.connect();
-    console.log("Successfully connected to PostgreSQL");
+    client = await pool.connect();
+    console.log("✅ Successfully connected to PostgreSQL Database");
     
     // Users Table
     await client.query(`
@@ -76,10 +89,11 @@ export const initDB = async () => {
       );
     `);
 
-    console.log("PostgreSQL Tables Initialized Successfully.");
-    client.release();
+    console.log("✅ PostgreSQL Tables Initialized/Verified.");
   } catch (err) {
-    console.error("FATAL: Error initializing database:", err);
+    console.error("❌ FATAL: Error initializing database:", err);
+  } finally {
+    if (client) client.release();
   }
 };
 
