@@ -1,103 +1,67 @@
-
 import { User, ChatSession, Task, TaskCategory } from '../types';
 
-const USER_KEY = 'shahryar_user'; // Currently logged-in user session
-const USERS_DB_KEY = 'shahryar_users_db'; // "Database" of all registered users
-const SESSIONS_KEY_PREFIX = 'shahryar_sessions_'; // Prefix for user-specific sessions
-const TASKS_KEY_PREFIX = 'shahryar_tasks_';
-const CATEGORIES_KEY_PREFIX = 'shahryar_categories_';
-
-// Helper to simulate network delay for better UX
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Helper to get all registered users
-const getDbUsers = (): User[] => {
-    try {
-        return JSON.parse(localStorage.getItem(USERS_DB_KEY) || '[]');
-    } catch { return []; }
-};
-
-// Helper to save users
-const saveDbUsers = (users: User[]) => {
-    localStorage.setItem(USERS_DB_KEY, JSON.stringify(users));
-};
+const USER_KEY = 'shahryar_active_user_id'; // Only store ID locally
+const API_BASE = '/api';
 
 export const storageService = {
   
   login: async (phone: string, password: string): Promise<User> => {
-    await delay(800); // Fake loading
-
-    const users = getDbUsers();
+    const response = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, password })
+    });
     
-    // 1. Check if user exists
-    const user = users.find(u => u.phone === phone);
-    if (!user) {
-        throw new Error("404: حساب کاربری یافت نشد.");
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Login Failed");
     }
 
-    // 2. Check password
-    if ((user as any).password !== password) {
-        throw new Error("401: رمز عبور اشتباه است.");
-    }
-
-    // 3. Login successful
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    const user = await response.json();
+    localStorage.setItem(USER_KEY, user.id);
     return user;
   },
 
   register: async (phone: string, password: string, name: string): Promise<User> => {
-    await delay(1000); // Fake loading
+    const response = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, password, name })
+    });
 
-    const users = getDbUsers();
-    if (users.find(u => u.phone === phone)) {
-        throw new Error("409: این شماره تلفن قبلا ثبت شده است.");
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Registration Failed");
     }
 
-    const newUser: User = {
-        id: 'user_' + Date.now(),
-        phone,
-        name,
-        joinedDate: new Date().toLocaleDateString('fa-IR'),
-        learnedData: [],
-        traits: [],
-        customInstructions: ''
-    };
-
-    // Store password alongside user data (Internal logic only)
-    const userWithPass = { ...newUser, password };
-    
-    users.push(userWithPass);
-    saveDbUsers(users);
-
-    // Auto login
-    localStorage.setItem(USER_KEY, JSON.stringify(newUser));
-    return newUser;
+    const user = await response.json();
+    localStorage.setItem(USER_KEY, user.id);
+    return user;
   },
 
   getUser: async (): Promise<User | null> => {
+      const userId = localStorage.getItem(USER_KEY);
+      if (!userId) return null;
+
       try {
-          const local = localStorage.getItem(USER_KEY);
-          return local ? JSON.parse(local) : null;
+          const response = await fetch(`${API_BASE}/user/${userId}`);
+          if (!response.ok) {
+              localStorage.removeItem(USER_KEY);
+              return null;
+          }
+          return await response.json();
       } catch (e) {
-          console.error("Error parsing user from storage", e);
-          localStorage.removeItem(USER_KEY); // Clear corrupted data
+          console.error("Failed to fetch user", e);
           return null;
       }
   },
 
   saveUser: async (user: User) => {
-      // Update current session
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
-
-      // Update in "Database"
-      const users = getDbUsers();
-      const index = users.findIndex(u => u.id === user.id);
-      if (index !== -1) {
-          // Preserve password when updating
-          const password = (users[index] as any).password;
-          users[index] = { ...user, password } as any;
-          saveDbUsers(users);
-      }
+      await fetch(`${API_BASE}/user/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(user)
+      });
   },
 
   logout: () => {
@@ -106,8 +70,9 @@ export const storageService = {
 
   getSessions: async (userId: string): Promise<ChatSession[]> => {
       try {
-          const key = SESSIONS_KEY_PREFIX + userId;
-          return JSON.parse(localStorage.getItem(key) || '[]');
+          const response = await fetch(`${API_BASE}/sessions/${userId}`);
+          if (!response.ok) return [];
+          return await response.json();
       } catch (e) { return []; }
   },
 
@@ -119,71 +84,59 @@ export const storageService = {
           createdAt: Date.now(),
           updatedAt: Date.now()
       };
+      // We pass userId manually to helper logic on backend, or attach it here
       await storageService.saveSession(newSession, userId);
       return newSession;
   },
 
   saveSession: async (session: ChatSession, userId: string) => {
-      const key = SESSIONS_KEY_PREFIX + userId;
-      const sessions: ChatSession[] = JSON.parse(localStorage.getItem(key) || '[]');
-      
-      const idx = sessions.findIndex((s) => s.id === session.id);
-      if (idx !== -1) sessions[idx] = session;
-      else sessions.push(session);
-      
-      localStorage.setItem(key, JSON.stringify(sessions));
+      // Backend expects session object. We inject userId to ensure link
+      const sessionWithUser = { ...session, userId };
+      await fetch(`${API_BASE}/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sessionWithUser)
+      });
   },
 
   deleteSession: async (id: string) => {
-      const currentUser = await storageService.getUser();
-      if (!currentUser) return;
-
-      const key = SESSIONS_KEY_PREFIX + currentUser.id;
-      const sessions: ChatSession[] = JSON.parse(localStorage.getItem(key) || '[]');
-      const filtered = sessions.filter((s) => s.id !== id);
-      localStorage.setItem(key, JSON.stringify(filtered));
+      await fetch(`${API_BASE}/sessions/${id}`, { method: 'DELETE' });
   },
 
   // --- Task Management ---
 
   getCategories: async (userId: string): Promise<TaskCategory[]> => {
-      const key = CATEGORIES_KEY_PREFIX + userId;
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-      
-      // Default Categories
-      const defaults: TaskCategory[] = [
-          { id: 'cat_todo', title: 'برای انجام', color: '#3b82f6' }, // Blue
-          { id: 'cat_doing', title: 'در حال انجام', color: '#eab308' }, // Yellow
-          { id: 'cat_done', title: 'انجام شده', color: '#22c55e' }  // Green
-      ];
-      localStorage.setItem(key, JSON.stringify(defaults));
-      return defaults;
+      try {
+          const response = await fetch(`${API_BASE}/categories/${userId}`);
+          if (!response.ok) return [];
+          return await response.json();
+      } catch (e) { return []; }
   },
 
   saveCategories: async (userId: string, categories: TaskCategory[]) => {
-      localStorage.setItem(CATEGORIES_KEY_PREFIX + userId, JSON.stringify(categories));
+      // Not implemented in backend bulk save for this specific prompt scope 
+      // as frontend doesn't actively edit categories in bulk yet, 
+      // but if needed, we'd add an endpoint. 
+      // For now, categories are read-only defaults or added automatically.
   },
 
   getTasks: async (userId: string): Promise<Task[]> => {
-      const key = TASKS_KEY_PREFIX + userId;
-      return JSON.parse(localStorage.getItem(key) || '[]');
+      try {
+          const response = await fetch(`${API_BASE}/tasks/${userId}`);
+          if (!response.ok) return [];
+          return await response.json();
+      } catch (e) { return []; }
   },
 
   saveTask: async (userId: string, task: Task) => {
-      const tasks = await storageService.getTasks(userId);
-      const index = tasks.findIndex(t => t.id === task.id);
-      if (index !== -1) {
-          tasks[index] = task;
-      } else {
-          tasks.push(task);
-      }
-      localStorage.setItem(TASKS_KEY_PREFIX + userId, JSON.stringify(tasks));
+      await fetch(`${API_BASE}/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(task)
+      });
   },
 
   deleteTask: async (userId: string, taskId: string) => {
-      const tasks = await storageService.getTasks(userId);
-      const filtered = tasks.filter(t => t.id !== taskId);
-      localStorage.setItem(TASKS_KEY_PREFIX + userId, JSON.stringify(filtered));
+      await fetch(`${API_BASE}/tasks/${userId}/${taskId}`, { method: 'DELETE' });
   }
 };
