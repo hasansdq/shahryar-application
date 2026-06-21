@@ -10,23 +10,43 @@ import { storageService } from './services/storageService';
 import { MessageSquare, User as UserIcon, Mic, Home, Calendar, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<ViewState>('loading');
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const cached = localStorage.getItem('shahryar_user_cache');
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
+  });
+  
+  const [view, setView] = useState<ViewState>(() => {
+    try {
+      const cached = localStorage.getItem('shahryar_user_cache');
+      return cached ? 'home' : 'loading';
+    } catch { return 'loading'; }
+  });
 
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Check for existing session
+        // Validate session with Firebase Auth in the background
         const storedUser = await storageService.getUser();
         if (storedUser) {
           setUser(storedUser);
-          setView('home'); // Redirect to home if logged in
+          localStorage.setItem('shahryar_user_cache', JSON.stringify(storedUser));
+          if (view === 'loading') {
+            setView('home');
+          }
         } else {
-          setView('auth'); // Redirect to auth if not logged in
+          // No user, clear stale cache immediately
+          localStorage.removeItem('shahryar_user_cache');
+          setUser(null);
+          setView('auth');
         }
       } catch (error) {
         console.error("Auth Initialization Error:", error);
-        setView('auth'); // Fallback to auth on error
+        // Only divert on true fail-to-auth states
+        if (!user) {
+          setView('auth');
+        }
       }
     };
     initAuth();
@@ -34,18 +54,31 @@ const App: React.FC = () => {
 
   const handleLogin = (newUser: User) => {
     setUser(newUser);
-    setView('home'); // Redirect to home after login/register
+    try {
+      localStorage.setItem('shahryar_user_cache', JSON.stringify(newUser));
+    } catch (e) {
+      console.warn("localStorage write failed:", e);
+    }
+    setView('home');
   };
 
   const handleUpdateUser = async (updatedUser: User) => {
     setUser(updatedUser);
+    try {
+      localStorage.setItem('shahryar_user_cache', JSON.stringify(updatedUser));
+    } catch (e) {
+      console.warn("localStorage write failed:", e);
+    }
     await storageService.saveUser(updatedUser);
   };
 
   const handleLogout = () => {
     storageService.logout();
+    try {
+      localStorage.removeItem('shahryar_user_cache');
+    } catch (e) {}
     setUser(null);
-    setView('auth'); // Redirect to auth after logout
+    setView('auth');
   };
 
   if (view === 'loading') {

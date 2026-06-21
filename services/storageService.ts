@@ -3,40 +3,65 @@ import { db, auth } from './firebase';
 import { collection, doc, setDoc, getDoc, getDocs, query, where, deleteDoc, orderBy } from 'firebase/firestore';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 
-const getMockEmail = (phone: string) => `${phone}@shahryar.local`;
+const getMockEmail = (phone: string) => {
+  // Normalize phone to clean string
+  const cleanPhone = phone.trim().replace(/\D/g, '');
+  return `${cleanPhone}@shahryar.local`;
+};
+
+const SECRET_PASSWORD = `shahryarSecretVerifyPassKey2026!`;
 
 export const storageService = {
   
-  getOrCreateUser: async (userId: string, phone: string, name?: string): Promise<User> => {
-    const userDocRef = doc(db, 'users', userId);
-    const userDoc = await getDoc(userDocRef);
+  checkPhoneExists: async (phone: string): Promise<boolean> => {
+    try {
+      const q = query(collection(db, 'users'), where('phone', '==', phone.trim()));
+      const snap = await getDocs(q);
+      return !snap.empty;
+    } catch (e) {
+      console.warn("Check phone exists failed: ", e);
+      return false;
+    }
+  },
+
+  firebaseLogin: async (phone: string): Promise<User> => {
+    const email = getMockEmail(phone);
+    const userCredential = await signInWithEmailAndPassword(auth, email, SECRET_PASSWORD);
+    const userId = userCredential.user.uid;
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (!userDoc.exists()) {
+       throw new Error("اطلاعات کاربری یافت نشد.");
+    }
+    return userDoc.data() as User;
+  },
+
+  firebaseRegister: async (phone: string, name: string): Promise<User> => {
+    const email = getMockEmail(phone);
+    const userCredential = await createUserWithEmailAndPassword(auth, email, SECRET_PASSWORD);
+    const userId = userCredential.user.uid;
     
-    if (userDoc.exists()) {
-      return userDoc.data() as User;
-    } else {
-      const newUser: User = {
+    const newUser: User = {
         id: userId,
-        phone,
-        name: name?.trim() || `شهروند ${phone.slice(-4)}`,
+        phone: phone.trim(),
+        name: name.trim(),
         joinedDate: new Date().toISOString(),
         learnedData: [],
         traits: []
-      };
-      
-      await setDoc(userDocRef, newUser);
+    };
+    
+    await setDoc(doc(db, 'users', userId), newUser);
 
-      // Create default categories for planning
-      const defaultCategories: TaskCategory[] = [
-        { id: `cat_todo_${Date.now()}`, userId, title: 'برای انجام', color: '#0d9488' },
-        { id: `cat_inprog_${Date.now()}`, userId, title: 'در حال انجام', color: '#eab308' },
-        { id: `cat_done_${Date.now()}`, userId, title: 'انجام شده', color: '#22c55e' }
-      ];
-      for (const cat of defaultCategories) {
-        await setDoc(doc(db, 'categories', cat.id), cat);
-      }
-
-      return newUser;
+    // Create default planning categories for this user
+    const defaultCategories: TaskCategory[] = [
+      { id: `cat_todo_${Date.now()}`, userId, title: 'برای انجام', color: '#0d9488' },
+      { id: `cat_inprog_${Date.now()}`, userId, title: 'در حال انجام', color: '#eab308' },
+      { id: `cat_done_${Date.now()}`, userId, title: 'انجام شده', color: '#22c55e' }
+    ];
+    for (const cat of defaultCategories) {
+      await setDoc(doc(db, 'categories', cat.id), cat);
     }
+
+    return newUser;
   },
 
   getUser: async (): Promise<User | null> => {
