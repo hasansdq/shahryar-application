@@ -1,10 +1,11 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../types';
 import { storageService } from '../services/storageService';
+import { auth } from '../services/firebase';
+import { RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
 import { 
-  User as UserIcon, Lock, Smartphone, ArrowLeft, 
-  Sparkles, ShieldCheck, Eye, EyeOff, Bot, Loader2
+  User as UserIcon, Smartphone, ArrowLeft, ArrowRight,
+  Sparkles, ShieldCheck, Bot, Loader2, KeyRound
 } from 'lucide-react';
 
 interface AuthProps {
@@ -51,120 +52,149 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  
+  // OTP related states
+  const [recaptchaVerifier, setRecaptchaVerifier] = useState<RecaptchaVerifier | null>(null);
+  const [confirmationResult, setConfirmationResult] = useState<any>(null);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   
-  // Timer reference to force-kill loading if it hangs
   const failsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear inputs on mode switch
+  // Initialize Recaptcha Verifier
   useEffect(() => {
-    setError(null);
-    setPassword('');
-    setConfirmPassword('');
-  }, [isLogin]);
+    try {
+      const verifier = new RecaptchaVerifier(auth, 'invisible-recaptcha-container', {
+        size: 'invisible',
+        callback: () => {
+          console.log("reCAPTCHA solved");
+        }
+      });
+      setRecaptchaVerifier(verifier);
+    } catch (e) {
+      console.error("reCAPTCHA initialization failed: ", e);
+    }
 
-  useEffect(() => {
     return () => {
       if (failsafeTimerRef.current) clearTimeout(failsafeTimerRef.current);
     };
   }, []);
 
-  // --- THE MASTER HANDLER FUNCTION ---
-  // This function guarantees that the system either logs in OR shows an error.
-  // It never leaves the user in a 'loading' state indefinitely.
-  const executeAuthSession = async () => {
-    setLoading(true);
+  // Normalize phone to E.164 (+98 for Iran)
+  const normalizePhoneNumber = (phoneStr: string) => {
+    let clean = phoneStr.trim().replace(/\s+/g, '');
+    if (clean.startsWith('09')) {
+      return '+98' + clean.slice(1);
+    }
+    if (clean.length === 10 && clean.startsWith('9')) {
+      return '+98' + clean;
+    }
+    if (clean.startsWith('+')) {
+      return clean;
+    }
+    if (clean.startsWith('9')) {
+      return '+98' + clean;
+    }
+    return clean;
+  };
+
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loading) return;
     setError(null);
 
-    // 1. Set a safety timer. If backend is totally dead, kill loading after 15s.
-    if (failsafeTimerRef.current) clearTimeout(failsafeTimerRef.current);
-    failsafeTimerRef.current = setTimeout(() => {
-        setLoading(false);
-        setError("پاسخی از سرور دریافت نشد. (تایم‌اوت)");
-    }, 15000);
+    const cleanPhone = phone.trim().replace(/\s+/g, '');
+    if (cleanPhone.length < 10) {
+      setError('شماره تلفن وارد شده صحیح نیست. لطفا یک تلفن معتبر وارد کنید.');
+      return;
+    }
+
+    if (!isLogin && !name.trim()) {
+      setError('نام و نام خانوادگی الزامی است.');
+      return;
+    }
+
+    setLoading(true);
 
     try {
-        let user: User;
-        console.log("Starting Auth Session...", isLogin ? "Login" : "Register");
+      const formattedPhone = normalizePhoneNumber(phone);
+      console.log("Initiating OTP to format phone:", formattedPhone);
 
-        // 2. Artificial delay for smooth UX (prevents flashing)
-        const minLoadTime = new Promise(resolve => setTimeout(resolve, 800));
+      let verifier = recaptchaVerifier;
+      if (!verifier) {
+        verifier = new RecaptchaVerifier(auth, 'invisible-recaptcha-container', {
+          size: 'invisible'
+        });
+        setRecaptchaVerifier(verifier);
+      }
 
-        // 3. Execute Service Call
-        let authPromise: Promise<User>;
-        if (isLogin) {
-            authPromise = storageService.login(phone, password);
-        } else {
-            authPromise = storageService.register(phone, password, name);
-        }
-
-        const [userData] = await Promise.all([authPromise, minLoadTime]);
-        user = userData;
-
-        // 4. Success!
-        console.log("Auth Successful:", user.id);
-        if (failsafeTimerRef.current) clearTimeout(failsafeTimerRef.current);
-        onLogin(user); // Triggers App.tsx to switch view
-
+      const cr = await signInWithPhoneNumber(auth, formattedPhone, verifier);
+      setConfirmationResult(cr);
+      setOtpSent(true);
     } catch (err: any) {
-        // 5. Failure Handling
-        console.error("Auth Failed:", err);
-        if (failsafeTimerRef.current) clearTimeout(failsafeTimerRef.current);
-        
-        // Translate error messages for user friendliness
-        let msg = err.message || "خطای ناشناخته";
-        if (msg.includes('404')) {
-             msg = "لطفا ابتدا ثبت نام کنید.";
-        } else if (msg.includes('401')) {
-             msg = "رمز عبور اشتباه است.";
-        } else if (msg.includes('409')) {
-             msg = "این شماره قبلا ثبت شده است.";
-        } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-             msg = "عدم ارتباط با سرور. اتصال اینترنت را بررسی کنید.";
-        }
-
-        setError(msg);
+      console.error("Error sending SMS OTP:", err);
+      let errMsg = "خطا در ارسال پیامک فعال‌سازی. لطفا وضعیت اینترنت را چک کنید.";
+      if (err.code === 'auth/invalid-phone-number') {
+        errMsg = "شماره تلفن وارد شده معتبر نیست. لطفا شماره را چک کنید.";
+      } else if (err.code === 'auth/too-many-requests') {
+        errMsg = "تعداد درخواست‌های پیامک بیش از حد مجاز است. لطفا دقایقی دیگر تلاش کنید.";
+      }
+      setError(errMsg);
     } finally {
-        // 6. GUARANTEED EXIT: Stop loading no matter what happens
-        setLoading(false);
+      setLoading(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
-    
-    // Validations
-    if (phone.length < 10) {
-      setError('شماره تلفن وارد شده صحیح نیست.');
+    setError(null);
+
+    if (otpCode.trim().length !== 6) {
+      setError('کد تایید باید ۶ رقمی باشد.');
       return;
     }
-    if (!password) {
-        setError('رمز عبور الزامی است.');
-        return;
-    }
 
-    if (!isLogin) {
-      if (!name.trim()) {
-        setError('لطفا نام خود را وارد کنید.');
-        return;
-      }
-      if (password !== confirmPassword) {
-        setError('رمز عبور و تکرار آن مطابقت ندارند.');
-        return;
-      }
-      if (password.length < 4) {
-        setError('رمز عبور باید حداقل ۴ کاراکتر باشد.');
-        return;
-      }
-    }
+    setLoading(true);
 
-    // Run the robust handler
-    executeAuthSession();
+    try {
+      if (!confirmationResult) {
+        throw new Error("نشست معتبر یافت نشد. لطفا مجدد تلاش کنید.");
+      }
+
+      const userCredential = await confirmationResult.confirm(otpCode.trim());
+      const firebaseUser = userCredential.user;
+
+      // Get or create Firestore profile under individual ID
+      const userProfile = await storageService.getOrCreateUser(
+        firebaseUser.uid,
+        firebaseUser.phoneNumber || phone,
+        isLogin ? undefined : name
+      );
+
+      console.log("SMS Verification Complete. Welcome:", userProfile.name);
+      onLogin(userProfile);
+    } catch (err: any) {
+      console.error("Failed OTP verification:", err);
+      let errMsg = "کد تایید وارد شده نامعتبر یا منقضی شده است.";
+      if (err.code === 'auth/invalid-verification-code') {
+        errMsg = "کد وارد شده صحیح نیست.";
+      } else if (err.code === 'auth/code-expired') {
+        errMsg = "کد تایید منقضی شده است؛ لطفا دوباره تلاش کنید.";
+      }
+      setError(errMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetForm = () => {
+    setOtpSent(false);
+    setOtpCode('');
+    setError(null);
   };
 
   return (
@@ -173,6 +203,9 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
       style={{ fontFamily: "'Vazirmatn', sans-serif" }}
     >
       <style>{authStyles}</style>
+
+      {/* --- Native Invisible ReCAPTCHA Container --- */}
+      <div id="invisible-recaptcha-container" className="hidden"></div>
 
       {/* --- Animated Background Elements --- */}
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-teal-500/20 rounded-full blur-[100px] animate-float pointer-events-none" />
@@ -196,127 +229,149 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         {/* --- Main Glass Card --- */}
         <div className="glass-card p-1 rounded-[32px] anim-entry anim-delay-1">
           
-          {/* Toggle Switch */}
-          <div className="relative flex bg-black/30 p-1 rounded-[28px] mb-6 mx-4 mt-4">
-            <div 
-              className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-teal-500 rounded-[24px] shadow-lg transition-all duration-300 ease-out ${isLogin ? 'right-1' : 'right-[50%]'}`} 
-            />
-            <button 
-              type="button"
-              className={`flex-1 relative z-10 py-3 text-sm font-bold transition-colors duration-300 ${isLogin ? 'text-white' : 'text-slate-300 hover:text-white'}`}
-              onClick={() => setIsLogin(true)}
-            >
-              ورود
-            </button>
-            <button 
-              type="button"
-              className={`flex-1 relative z-10 py-3 text-sm font-bold transition-colors duration-300 ${!isLogin ? 'text-white' : 'text-slate-300 hover:text-white'}`}
-              onClick={() => setIsLogin(false)}
-            >
-              ثبت نام
-            </button>
-          </div>
+          {/* Toggle Switch (Hidden when OTP Screen is active) */}
+          {!otpSent && (
+            <div className="relative flex bg-black/30 p-1 rounded-[28px] mb-6 mx-4 mt-4">
+              <div 
+                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-teal-500 rounded-[24px] shadow-lg transition-all duration-300 ease-out ${isLogin ? 'right-1' : 'right-[50%]'}`} 
+              />
+              <button 
+                type="button"
+                className={`flex-1 relative z-10 py-3 text-sm font-bold transition-colors duration-300 ${isLogin ? 'text-white' : 'text-slate-300 hover:text-white'}`}
+                onClick={() => { setIsLogin(true); setError(null); }}
+              >
+                ورود
+              </button>
+              <button 
+                type="button"
+                className={`flex-1 relative z-10 py-3 text-sm font-bold transition-colors duration-300 ${!isLogin ? 'text-white' : 'text-slate-300 hover:text-white'}`}
+                onClick={() => { setIsLogin(false); setError(null); }}
+              >
+                ثبت نام جدید
+              </button>
+            </div>
+          )}
 
-          <form onSubmit={handleSubmit} className="px-5 pb-6 space-y-4">
-            
-            {/* Name Field (Signup Only) */}
-            {!isLogin && (
-              <div className="relative group anim-entry">
+          {!otpSent ? (
+            /* --- ENTER PHONE NUMBER SCREEN --- */
+            <form onSubmit={handleSendOtp} className="px-5 pb-6 space-y-4">
+              
+              {!isLogin && (
+                <div className="relative group anim-entry">
+                  <div className="absolute right-3 top-3.5 text-teal-300/70 group-focus-within:text-teal-300 transition-colors">
+                    <UserIcon className="w-5 h-5" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="نام و نام خانوادگی"
+                    className="w-full bg-black/20 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-400 focus:outline-none input-focus-effect transition-all duration-300 text-sm"
+                    style={{ fontFamily: "'Vazirmatn', sans-serif" }}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required={!isLogin}
+                  />
+                </div>
+              )}
+              
+              <div className="relative group anim-entry anim-delay-1">
                 <div className="absolute right-3 top-3.5 text-teal-300/70 group-focus-within:text-teal-300 transition-colors">
-                  <UserIcon className="w-5 h-5" />
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <input
+                  type="tel"
+                  placeholder="شماره تلفن همراه (مثلا 09131234567)"
+                  className="w-full bg-black/20 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-400 focus:outline-none input-focus-effect transition-all duration-300 text-sm text-left dir-ltr"
+                  style={{ direction: 'ltr', textAlign: 'right', fontFamily: "'Vazirmatn', sans-serif" }}
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  required
+                />
+              </div>
+
+              {error && (
+                <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 text-center">
+                  <p className="text-red-200 text-xs font-bold">{error}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-white font-bold py-4 rounded-2xl shadow-[0_10px_20px_-5px_rgba(20,184,166,0.4)] mt-4 flex items-center justify-center gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] anim-entry anim-delay-3"
+              >
+                {loading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <>
+                      <span className="text-lg">ارسال کد پیامکی تایید</span>
+                      <div className="bg-white/20 p-1 rounded-full">
+                          <ArrowLeft className="w-5 h-5" />
+                      </div>
+                  </>
+                )}
+              </button>
+            </form>
+          ) : (
+            /* --- VERIFY CODE SCREEN --- */
+            <form onSubmit={handleVerifyOtp} className="px-5 py-6 space-y-4">
+              <div className="text-center space-y-2 mb-4">
+                <ShieldCheck className="w-12 h-12 text-teal-400 mx-auto animate-bounce" />
+                <h3 className="text-lg font-bold text-teal-100">کد تایید را وارد کنید</h3>
+                <p className="text-xs text-teal-200/70">
+                  یک کد فعال‌سازی ۶ رقمی به شماره <span className="font-bold text-white dir-ltr inline-block">{phone}</span> ارسال شد.
+                </p>
+              </div>
+
+              <div className="relative group">
+                <div className="absolute right-3 top-3.5 text-teal-300/70 group-focus-within:text-teal-300 transition-colors">
+                  <KeyRound className="w-5 h-5" />
                 </div>
                 <input
                   type="text"
-                  placeholder="نام و نام خانوادگی"
-                  className="w-full bg-black/20 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-400 focus:outline-none input-focus-effect transition-all duration-300 text-sm"
+                  maxLength={6}
+                  placeholder="- - - - - -"
+                  className="w-full bg-black/25 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white text-center font-bold tracking-[0.5em] focus:outline-none input-focus-effect transition-all duration-300 text-lg"
                   style={{ fontFamily: "'Vazirmatn', sans-serif" }}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  required
                 />
               </div>
-            )}
-            
-            {/* Phone Field */}
-            <div className="relative group anim-entry anim-delay-1">
-              <div className="absolute right-3 top-3.5 text-teal-300/70 group-focus-within:text-teal-300 transition-colors">
-                <Smartphone className="w-5 h-5" />
-              </div>
-              <input
-                type="tel"
-                placeholder="شماره تلفن همراه"
-                className="w-full bg-black/20 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-400 focus:outline-none input-focus-effect transition-all duration-300 text-sm text-left dir-ltr"
-                style={{ direction: 'ltr', textAlign: 'right', fontFamily: "'Vazirmatn', sans-serif" }}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-              />
-            </div>
 
-            {/* Password Field */}
-            <div className="relative group anim-entry anim-delay-2">
-              <div className="absolute right-3 top-3.5 text-teal-300/70 group-focus-within:text-teal-300 transition-colors">
-                <Lock className="w-5 h-5" />
-              </div>
-              <input
-                type={showPassword ? "text" : "password"}
-                placeholder="رمز عبور"
-                className="w-full bg-black/20 border border-white/10 rounded-2xl py-3.5 pr-11 pl-10 text-white placeholder-slate-400 focus:outline-none input-focus-effect transition-all duration-300 text-sm"
-                style={{ fontFamily: "'Vazirmatn', sans-serif" }}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute left-3 top-3.5 text-slate-400 hover:text-white transition-colors"
-              >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-              </button>
-            </div>
-
-            {/* Confirm Password Field (Signup Only) */}
-            {!isLogin && (
-              <div className="relative group anim-entry">
-                <div className="absolute right-3 top-3.5 text-teal-300/70 group-focus-within:text-teal-300 transition-colors">
-                  <ShieldCheck className="w-5 h-5" />
+              {error && (
+                <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 text-center">
+                  <p className="text-red-200 text-xs font-bold">{error}</p>
                 </div>
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="تکرار رمز عبور"
-                  className="w-full bg-black/20 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-400 focus:outline-none input-focus-effect transition-all duration-300 text-sm"
-                  style={{ fontFamily: "'Vazirmatn', sans-serif" }}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* Error Message */}
-            {error && (
-              <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-3 text-center animate-pulse">
-                <p className="text-red-200 text-xs font-bold">{error}</p>
-              </div>
-            )}
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-white font-bold py-4 rounded-2xl shadow-[0_10px_20px_-5px_rgba(20,184,166,0.4)] mt-4 flex items-center justify-center gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] anim-entry anim-delay-3"
-            >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                    <span className="text-lg">{isLogin ? 'ورود به حساب' : 'ایجاد حساب کاربری'}</span>
-                    <div className="bg-white/20 p-1 rounded-full">
-                        <ArrowLeft className="w-5 h-5" />
-                    </div>
-                </>
               )}
-            </button>
-          </form>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleResetForm}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 transition-all duration-300 text-sm"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                  ویرایش شماره
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-[2] bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-white font-bold py-3.5 rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 text-sm"
+                >
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <span>تایید و ورود</span>
+                      <ShieldCheck className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
+
         </div>
         
         <div className="text-center mt-8 anim-entry anim-delay-3">

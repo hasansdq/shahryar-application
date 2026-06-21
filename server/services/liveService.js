@@ -1,5 +1,6 @@
 import ai from '../config/ai.js';
 import { getLocalKnowledge, vectorSearchTool } from '../utils/helpers.js';
+import { Modality } from '@google/genai';
 
 export const setupLiveServer = (wss) => {
     wss.on('connection', async (ws) => {
@@ -10,9 +11,9 @@ export const setupLiveServer = (wss) => {
 
         try {
             const sessionPromise = ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+                model: 'gemini-3.1-flash-live-preview',
                 config: {
-                    responseModalities: ['AUDIO'],
+                    responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
                     systemInstruction: "You are Shahryar, a helpful assistant.",
                     tools: [{ functionDeclarations: [vectorSearchTool] }],
@@ -39,7 +40,9 @@ export const setupLiveServer = (wss) => {
             ws.on('message', (m) => {
                 if(!isActive || !session) return;
                 const d = JSON.parse(m);
-                if(d.type === 'audio') session.sendRealtimeInput({ media: { mimeType: 'audio/pcm;rate=16000', data: d.data } });
+                if(d.type === 'audio') {
+                    sessionPromise.then(s => s.sendRealtimeInput({ audio: { mimeType: 'audio/pcm;rate=16000', data: d.data } }));
+                }
             });
             ws.on('close', () => { isActive = false; if(session) session.close(); });
         } catch(e) { ws.close(); }

@@ -157,12 +157,14 @@ export const Home: React.FC<HomeProps> = ({ user, onChangeView }) => {
         if(!response.ok) throw new Error("API Error");
 
         const taskData = await response.json();
+        const userCats = await storageService.getCategories(user.id);
+        const fallbackCat = userCats.length > 0 ? userCats[0].id : '';
 
         if (taskData.title) {
             const newTask: Task = {
                 id: Date.now().toString(),
                 userId: user.id,
-                categoryId: taskData.categoryId || 'cat_todo',
+                categoryId: taskData.categoryId && userCats.some(c => c.id === taskData.categoryId) ? taskData.categoryId : fallbackCat,
                 title: taskData.title,
                 description: taskData.description || '',
                 status: 'todo',

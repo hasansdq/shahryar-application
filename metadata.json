@@ -3,5 +3,6 @@
   "description": "An intelligent city assistant for Rafsanjan citizens featuring real-time voice chat and local knowledge.",
   "requestFramePermissions": [
     "microphone"
-  ]
+  ],
+  "majorCapabilities": []
 }

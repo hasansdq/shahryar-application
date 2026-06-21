@@ -1,78 +1,83 @@
 import { User, ChatSession, Task, TaskCategory } from '../types';
+import { db, auth } from './firebase';
+import { collection, doc, setDoc, getDoc, getDocs, query, where, deleteDoc, orderBy } from 'firebase/firestore';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 
-const USER_KEY = 'shahryar_active_user_id'; // Only store ID locally
-const API_BASE = '/api';
+const getMockEmail = (phone: string) => `${phone}@shahryar.local`;
 
 export const storageService = {
   
-  login: async (phone: string, password: string): Promise<User> => {
-    const response = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, password })
-    });
+  getOrCreateUser: async (userId: string, phone: string, name?: string): Promise<User> => {
+    const userDocRef = doc(db, 'users', userId);
+    const userDoc = await getDoc(userDocRef);
     
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Login Failed");
+    if (userDoc.exists()) {
+      return userDoc.data() as User;
+    } else {
+      const newUser: User = {
+        id: userId,
+        phone,
+        name: name?.trim() || `شهروند ${phone.slice(-4)}`,
+        joinedDate: new Date().toISOString(),
+        learnedData: [],
+        traits: []
+      };
+      
+      await setDoc(userDocRef, newUser);
+
+      // Create default categories for planning
+      const defaultCategories: TaskCategory[] = [
+        { id: `cat_todo_${Date.now()}`, userId, title: 'برای انجام', color: '#0d9488' },
+        { id: `cat_inprog_${Date.now()}`, userId, title: 'در حال انجام', color: '#eab308' },
+        { id: `cat_done_${Date.now()}`, userId, title: 'انجام شده', color: '#22c55e' }
+      ];
+      for (const cat of defaultCategories) {
+        await setDoc(doc(db, 'categories', cat.id), cat);
+      }
+
+      return newUser;
     }
-
-    const user = await response.json();
-    localStorage.setItem(USER_KEY, user.id);
-    return user;
-  },
-
-  register: async (phone: string, password: string, name: string): Promise<User> => {
-    const response = await fetch(`${API_BASE}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, password, name })
-    });
-
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Registration Failed");
-    }
-
-    const user = await response.json();
-    localStorage.setItem(USER_KEY, user.id);
-    return user;
   },
 
   getUser: async (): Promise<User | null> => {
-      const userId = localStorage.getItem(USER_KEY);
-      if (!userId) return null;
+    await new Promise(resolve => {
+        const unsubscribe = auth.onAuthStateChanged((u) => {
+            unsubscribe();
+            resolve(u);
+        }, () => {
+            unsubscribe();
+            resolve(null);
+        });
+    });
+    const uid = auth.currentUser?.uid;
+    if (!uid) return null;
 
-      try {
-          const response = await fetch(`${API_BASE}/user/${userId}`);
-          if (!response.ok) {
-              localStorage.removeItem(USER_KEY);
-              return null;
-          }
-          return await response.json();
-      } catch (e) {
-          console.error("Failed to fetch user", e);
-          return null;
-      }
+    try {
+        const userDoc = await getDoc(doc(db, 'users', uid));
+        if (!userDoc.exists()) {
+            return null;
+        }
+        return userDoc.data() as User;
+    } catch (e) {
+        console.error("Failed to fetch user", e);
+        return null;
+    }
   },
 
   saveUser: async (user: User) => {
-      await fetch(`${API_BASE}/user/update`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(user)
-      });
+      await setDoc(doc(db, 'users', user.id), user, { merge: true });
   },
 
-  logout: () => {
-      localStorage.removeItem(USER_KEY);
+  logout: async () => {
+      await signOut(auth);
   },
 
   getSessions: async (userId: string): Promise<ChatSession[]> => {
       try {
-          const response = await fetch(`${API_BASE}/sessions/${userId}`);
-          if (!response.ok) return [];
-          return await response.json();
+          const q = query(collection(db, 'sessions'), where('userId', '==', userId));
+          const snapshot = await getDocs(q);
+          const sessions = snapshot.docs.map(d => d.data() as ChatSession);
+          return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
       } catch (e) { return []; }
   },
 
@@ -84,59 +89,50 @@ export const storageService = {
           createdAt: Date.now(),
           updatedAt: Date.now()
       };
-      // We pass userId manually to helper logic on backend, or attach it here
       await storageService.saveSession(newSession, userId);
       return newSession;
   },
 
   saveSession: async (session: ChatSession, userId: string) => {
-      // Backend expects session object. We inject userId to ensure link
       const sessionWithUser = { ...session, userId };
-      await fetch(`${API_BASE}/sessions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sessionWithUser)
-      });
+      await setDoc(doc(db, 'sessions', session.id), sessionWithUser, { merge: true });
   },
 
   deleteSession: async (id: string) => {
-      await fetch(`${API_BASE}/sessions/${id}`, { method: 'DELETE' });
+      await deleteDoc(doc(db, 'sessions', id));
   },
 
   // --- Task Management ---
 
   getCategories: async (userId: string): Promise<TaskCategory[]> => {
       try {
-          const response = await fetch(`${API_BASE}/categories/${userId}`);
-          if (!response.ok) return [];
-          return await response.json();
+          const q = query(collection(db, 'categories'), where('userId', '==', userId));
+          const snapshot = await getDocs(q);
+          return snapshot.docs.map(d => d.data() as TaskCategory);
       } catch (e) { return []; }
   },
 
   saveCategories: async (userId: string, categories: TaskCategory[]) => {
-      // Not implemented in backend bulk save for this specific prompt scope 
-      // as frontend doesn't actively edit categories in bulk yet, 
-      // but if needed, we'd add an endpoint. 
-      // For now, categories are read-only defaults or added automatically.
+      for (const cat of categories) {
+        await setDoc(doc(db, 'categories', cat.id), cat, { merge: true });
+      }
   },
 
   getTasks: async (userId: string): Promise<Task[]> => {
       try {
-          const response = await fetch(`${API_BASE}/tasks/${userId}`);
-          if (!response.ok) return [];
-          return await response.json();
+          const q = query(collection(db, 'tasks'), where('userId', '==', userId));
+          const snapshot = await getDocs(q);
+          const tasks = snapshot.docs.map(d => d.data() as Task);
+          return tasks.sort((a, b) => b.createdAt - a.createdAt);
       } catch (e) { return []; }
   },
 
   saveTask: async (userId: string, task: Task) => {
-      await fetch(`${API_BASE}/tasks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(task)
-      });
+      const taskWithUser = { ...task, userId };
+      await setDoc(doc(db, 'tasks', task.id), taskWithUser, { merge: true });
   },
 
   deleteTask: async (userId: string, taskId: string) => {
-      await fetch(`${API_BASE}/tasks/${userId}/${taskId}`, { method: 'DELETE' });
+      await deleteDoc(doc(db, 'tasks', taskId));
   }
 };
