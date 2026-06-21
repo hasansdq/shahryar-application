@@ -1,0 +1,12 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "shahryar-smart-rafsanjan"
+main = "worker.ts"
+compatibility_date = "2024-04-03"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[vars]
+# You can define non-secret public environment variables here if needed
+# Secrets like GEMINI_API_KEY must be added via `wrangler secret put GEMINI_API_KEY` or the Cloudflare Dashboard.

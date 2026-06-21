@@ -10,6 +10,7 @@
     "express": "^4.18.2",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.0.0",
+    "hono": "^4.12.26",
     "lucide-react": "^0.294.0",
     "pg": "^8.11.3",
     "react": "^18.2.0",
@@ -28,11 +29,15 @@
     "tailwindcss": "^3.3.5",
     "tsx": "^4.22.4",
     "typescript": "^5.2.2",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "wrangler": "^4.103.0"
   },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build:cf": "vite build",
+    "deploy:cf": "npm run build:cf && wrangler deploy",
+    "dev:cf": "npm run build:cf && wrangler dev",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "lint": "echo ok"
