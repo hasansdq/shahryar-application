@@ -1,16 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { User } from '../types';
 import { storageService } from '../services/storageService';
-import { 
-  User as UserIcon, Smartphone, ArrowLeft, ArrowRight,
-  Sparkles, ShieldCheck, Bot, Loader2, KeyRound, CheckCircle, MessageSquare
-} from 'lucide-react';
+import { Sparkles, Bot, Loader2 } from 'lucide-react';
 
 interface AuthProps {
   onLogin: (user: User) => void;
 }
 
-// Custom CSS for animations
+// Custom CSS for animations and glass effect
 const authStyles = `
   @keyframes float {
     0% { transform: translate(0px, 0px) rotate(0deg); }
@@ -22,12 +19,6 @@ const authStyles = `
     from { opacity: 0; transform: translateY(20px); }
     to { opacity: 1; transform: translateY(0); }
   }
-  @keyframes slideDownMessage {
-    0% { transform: translateY(-100px); opacity: 0; }
-    10% { transform: translateY(16px); opacity: 1; }
-    90% { transform: translateY(16px); opacity: 1; }
-    100% { transform: translateY(-100px); opacity: 0; }
-  }
   .animate-float { animation: float 15s ease-in-out infinite; }
   .animate-float-delayed { animation: float 20s ease-in-out infinite reverse; }
   .glass-card {
@@ -37,138 +28,36 @@ const authStyles = `
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
   }
-  .input-focus-effect:focus-within {
-    border-color: #5eead4;
-    box-shadow: 0 0 0 4px rgba(94, 234, 212, 0.1);
-    background: rgba(0, 0, 0, 0.3);
-  }
   .anim-entry { animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
   .anim-delay-1 { animation-delay: 0.1s; }
   .anim-delay-2 { animation-delay: 0.2s; }
-  .anim-delay-3 { animation-delay: 0.3s; }
-  .animate-sms-alert {
-    animation: slideDownMessage 7.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
 `;
 
 export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
-  const [isLogin, setIsLogin] = useState(true);
-  const [phone, setPhone] = useState('');
-  const [name, setName] = useState('');
-  
-  // Custom Adaptive Verification System
-  const [otpSent, setOtpSent] = useState(false);
-  const [expectedOtp, setExpectedOtp] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [showSMSNotify, setShowSMSNotify] = useState(false);
-
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleSendOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleGoogleLogin = async () => {
     if (loading) return;
     setError(null);
-
-    const cleanPhone = phone.trim().replace(/\s+/g, '');
-    if (cleanPhone.length < 10) {
-      setError('شماره تلفن وارد شده صحیح نیست. لطفاً یک تلفن معتبر وارد کنید.');
-      return;
-    }
-
-    if (!isLogin && !name.trim()) {
-      setError('نام و نام خانوادگی الزامی است.');
-      return;
-    }
-
     setLoading(true);
 
     try {
-      // 1. Fire up database validation check
-      const phoneExists = await storageService.checkPhoneExists(cleanPhone);
-
-      if (isLogin) {
-        if (!phoneExists) {
-          setError('کاربری با این شماره یافت نشد؛ جهت عضویت لطفاً وارد زبانه "ثبت نام جدید" شوید.');
-          setLoading(false);
-          return;
-        }
-      } else {
-        if (phoneExists) {
-          setError('این شماره همراه قبلاً در سیستم ثبت شده است. لطفاً از بخش ورود استفاده کنید.');
-          setLoading(false);
-          return;
-        }
-      }
-
-      // 2. Generate and trigger interactive Shahryar SMS simulator code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      setExpectedOtp(code);
-      
-      // Delay to make it look highly authentic and responsive
-      setTimeout(() => {
-        setOtpSent(true);
-        setLoading(false);
-        setShowSMSNotify(true);
-        
-        // Auto hide notification after 7 seconds
-        setTimeout(() => {
-          setShowSMSNotify(false);
-        }, 7500);
-      }, 900);
-
-    } catch (err: any) {
-      console.error("Auth send code error:", err);
-      setError("خطا در برقراری ارتباط با پایگاه داده. وضعیت شبکه را بررسی کنید.");
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loading) return;
-    setError(null);
-
-    if (otpCode.trim().length !== 6) {
-      setError('کد تایید باید ۶ رقمی باشد.');
-      return;
-    }
-
-    if (otpCode.trim() !== expectedOtp) {
-      setError('کد فعال‌سازی وارد شده صحیح نیست؛ لطفاً مجدداً امتحان کنید.');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      let userProfile: User;
-      if (isLogin) {
-        userProfile = await storageService.firebaseLogin(phone);
-      } else {
-        userProfile = await storageService.firebaseRegister(phone, name);
-      }
-
-      console.log("Firebase Auth Authenticated successfully. Welcome: ", userProfile.name);
+      const userProfile = await storageService.googleLogin();
+      console.log("Authenticated via Google successfully. Welcome: ", userProfile.name);
       onLogin(userProfile);
     } catch (err: any) {
-      console.error("Firebase auth mapped link failed:", err);
-      setError(err?.message || "خطا در پردازش اطلاعات کاربر در سرور فایربیس.");
+      console.error("Google authentication failed:", err);
+      let errMsg = "خطا در فرآیند احراز هویت با اکانت گوگل. لطفا وضعیت اینترنت خود را بسنجید.";
+      if (err.code === 'auth/popup-closed-by-user') {
+        errMsg = "پنجره ورود توسط کاربر بسته شد. جهت ورود باید فرآیند را تکمیل کنید.";
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        errMsg = "درخواست ورود از طرف سیستم لغو گردید. لطفا دوباره تلاش کنید.";
+      }
+      setError(errMsg);
+    } finally {
       setLoading(false);
     }
-  };
-
-  const handleResetForm = () => {
-    setOtpSent(false);
-    setOtpCode('');
-    setError(null);
-    setShowSMSNotify(false);
-  };
-
-  const cleanPhoneInput = (val: string) => {
-    // Only allow numbers
-    const numbersOnly = val.replace(/\D/g, '');
-    setPhone(numbersOnly);
   };
 
   return (
@@ -178,27 +67,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     >
       <style>{authStyles}</style>
 
-      {/* --- Adaptive SMS Notification Toast --- */}
-      {showSMSNotify && (
-        <div className="fixed top-0 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-          <div className="w-full max-w-sm bg-slate-900/95 border border-teal-500/30 text-white rounded-2xl p-4 shadow-2xl flex items-start gap-3 pointer-events-auto animate-sms-alert">
-            <div className="bg-teal-500/20 p-2.5 rounded-xl text-teal-400">
-              <MessageSquare className="w-5 h-5" />
-            </div>
-            <div className="flex-1 text-right">
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] text-slate-400">پیامک - هم‌اکنون</span>
-                <span className="text-xs font-bold text-teal-400">سامانه پیامکی شهریار</span>
-              </div>
-              <p className="text-xs text-slate-200 leading-relaxed font-semibold">
-                کد تایید ورود به برنامه شهریار شما: <span className="font-bold text-teal-300 text-sm tracking-widest">{expectedOtp}</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- Animated Ambient Background --- */}
+      {/* --- Animated Ambient Background Elements --- */}
       <div className="absolute top-[-10%] left-[-10%] w-[450px] h-[450px] bg-teal-500/10 rounded-full blur-[120px] animate-float pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-600/10 rounded-full blur-[130px] animate-float-delayed pointer-events-none" />
 
@@ -217,154 +86,56 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         </div>
 
         {/* --- Main Glass Card --- */}
-        <div className="glass-card p-1 rounded-[32px] anim-entry anim-delay-1">
+        <div className="glass-card p-6 rounded-[32px] anim-entry anim-delay-1 flex flex-col items-center">
           
-          {/* Toggle Switch */}
-          {!otpSent && (
-            <div className="relative flex bg-black/40 p-1 rounded-[28px] mb-5 mx-4 mt-4 border border-white/5">
-              <div 
-                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-gradient-to-r from-teal-500 to-emerald-500 rounded-[24px] shadow-lg transition-all duration-300 ease-out ${isLogin ? 'right-1' : 'right-[50%]'}`} 
-              />
-              <button 
-                type="button"
-                className={`flex-1 relative z-10 py-3.5 text-xs font-bold transition-colors duration-300 ${isLogin ? 'text-white font-black' : 'text-slate-400 hover:text-slate-200'}`}
-                onClick={() => { setIsLogin(true); setError(null); }}
-              >
-                ورود شهروندی
-              </button>
-              <button 
-                type="button"
-                className={`flex-1 relative z-10 py-3.5 text-xs font-bold transition-colors duration-300 ${!isLogin ? 'text-white font-black' : 'text-slate-400 hover:text-slate-200'}`}
-                onClick={() => { setIsLogin(false); setError(null); }}
-              >
-                ثبت نام جدید
-              </button>
+          <h2 className="text-lg font-bold text-center text-teal-100 mb-2">خوش آمدید</h2>
+          <p className="text-slate-300 text-xs text-center leading-relaxed mb-6 font-light">
+             برای ورود سریع و امن به سامانه دستیار هوشمند، از حساب کاربری گوگل خود استفاده نمایید. اطلاعات تکمیلی شما در برنامه محفوظ است.
+          </p>
+
+          {error && (
+            <div className="w-full bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center mb-4 anim-entry">
+              <p className="text-red-300 text-[11px] font-bold leading-relaxed">{error}</p>
             </div>
           )}
 
-          {!otpSent ? (
-            /* --- ENTER PHONE NUMBER SCREEN --- */
-            <form onSubmit={handleSendOtp} className="px-5 pb-6 space-y-4">
-              
-              {!isLogin && (
-                <div className="relative group anim-entry">
-                  <div className="absolute right-3.5 top-3.5 text-slate-400 group-focus-within:text-teal-400 transition-colors">
-                    <UserIcon className="w-5 h-5" />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    placeholder="نام و نام خانوادگی خود را بنویسید"
-                    className="w-full bg-slate-950/40 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-500 focus:outline-none input-focus-effect transition-all duration-300 text-sm"
-                    style={{ fontFamily: "'Vazirmatn', sans-serif" }}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleGoogleLogin}
+            className="w-full bg-white text-slate-800 hover:bg-slate-100 font-bold py-3.5 px-4 rounded-2xl shadow-xl flex items-center justify-center gap-3 transition-all duration-300 active:scale-[0.98] border border-white/20 text-sm"
+          >
+            {loading ? (
+              <Loader2 className="w-5 h-5 text-slate-500 animate-spin" />
+            ) : (
+              <>
+                {/* Modern Inline SVG Google Icon */}
+                <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.04c1.67 0 3.2.58 4.38 1.71l3.27-3.27C17.65 1.54 15.01 1 12 1 7.35 1 3.4 3.73 1.58 7.68l3.96 3.07C6.46 7.61 8.98 5.04 12 5.04z"
                   />
-                </div>
-              )}
-              
-              <div className="relative group anim-entry anim-delay-1">
-                <div className="absolute right-3.5 top-3.5 text-slate-400 group-focus-within:text-teal-400 transition-colors">
-                  <Smartphone className="w-5 h-5" />
-                </div>
-                <input
-                  type="tel"
-                  required
-                  placeholder="شماره تلفن همراه (مثلا 09131234567)"
-                  className="w-full bg-slate-950/40 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white placeholder-slate-500 focus:outline-none input-focus-effect transition-all duration-300 text-sm text-left dir-ltr"
-                  style={{ direction: 'ltr', textAlign: 'right', fontFamily: "'Vazirmatn', sans-serif" }}
-                  value={phone}
-                  onChange={(e) => cleanPhoneInput(e.target.value)}
-                />
-              </div>
-
-              {error && (
-                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center anim-entry">
-                  <p className="text-red-300 text-[11px] font-bold leading-relaxed">{error}</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-white font-bold py-4 rounded-2xl shadow-[0_10px_20px_-5px_rgba(20,184,166,0.25)] mt-4 flex items-center justify-center gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] anim-entry anim-delay-3"
-              >
-                {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <>
-                      <span className="text-sm font-black">دریافت کد تایید یکبار مصرف</span>
-                      <div className="bg-white/10 p-1 rounded-full">
-                          <ArrowLeft className="w-4 h-4" />
-                      </div>
-                  </>
-                )}
-              </button>
-            </form>
-          ) : (
-            /* --- VERIFY CODE SCREEN --- */
-            <form onSubmit={handleVerifyOtp} className="px-5 py-6 space-y-4">
-              <div className="text-center space-y-2 mb-4">
-                <CheckCircle className="w-12 h-12 text-teal-400 mx-auto animate-pulse" />
-                <h3 className="text-lg font-bold text-teal-100">درخواست با موفقیت ارسال شد</h3>
-                <p className="text-xs text-slate-400 leading-relaxed px-1">
-                  کد تایید ۶ رقمی به شماره <span className="font-bold text-white dir-ltr inline-block text-sm">{phone}</span> ارسال گردید. آن را وارد کنید یا از پیامک شبیه‌سازی بالا بخوانید.
-                </p>
-              </div>
-
-              <div className="relative group">
-                <div className="absolute right-3.5 top-3.5 text-slate-400 group-focus-within:text-teal-400 transition-colors">
-                  <KeyRound className="w-5 h-5" />
-                </div>
-                <input
-                  type="text"
-                  maxLength={6}
-                  required
-                  placeholder="- - - - - -"
-                  className="w-full bg-slate-950/40 border border-white/10 rounded-2xl py-3.5 pr-11 pl-4 text-white text-center font-bold tracking-[0.5em] focus:outline-none input-focus-effect transition-all duration-300 text-lg"
-                  style={{ fontFamily: "'Vazirmatn', sans-serif" }}
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                />
-              </div>
-
-              {error && (
-                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center">
-                  <p className="text-red-300 text-[11px] font-bold leading-relaxed">{error}</p>
-                </div>
-              )}
-
-              <div className="flex gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={handleResetForm}
-                  className="flex-1 bg-white/5 hover:bg-white/10 text-slate-300 font-bold py-3.5 rounded-2xl flex items-center justify-center gap-1.5 transition-all duration-300 text-xs border border-white/5"
-                >
-                  <ArrowRight className="w-3.5 h-3.5" />
-                  ویرایش شماره
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="flex-[2] bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-white font-bold py-3.5 rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 text-xs"
-                >
-                  {loading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <span className="font-black">تایید نهایی و ورود</span>
-                      <ShieldCheck className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          )}
+                  <path
+                    fill="#4285F4"
+                    d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.44c-.28 1.47-1.11 2.71-2.36 3.55l3.67 2.84c2.15-1.98 3.39-4.89 3.39-8.55z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.54 10.75c-.24-.71-.38-1.47-.38-2.25s.14-1.54.38-2.25L1.58 3.18C.57 5.16 0 7.37 0 9.75s.57 4.59 1.58 6.57l3.96-3.07z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c3.24 0 5.97-1.07 7.96-2.91l-3.67-2.84c-1.02.68-2.33 1.09-3.96 1.09-3.02 0-5.54-2.57-6.46-5.71L1.58 15.7C3.4 19.65 7.35 23 12 23z"
+                  />
+                </svg>
+                <span className="font-bold">ورود با اکانت Google</span>
+              </>
+            )}
+          </button>
 
         </div>
         
-        <div className="text-center mt-8 anim-entry anim-delay-3">
+        <div className="text-center mt-8 anim-entry anim-delay-2">
            <p className="text-teal-200/20 text-[10px] tracking-widest font-light">
              طراحی دستیار هوشمند شهریار رفسنجان © ۱۴۰۵
            </p>

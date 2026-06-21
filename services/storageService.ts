@@ -1,7 +1,7 @@
 import { User, ChatSession, Task, TaskCategory } from '../types';
 import { db, auth } from './firebase';
 import { collection, doc, setDoc, getDoc, getDocs, query, where, deleteDoc, orderBy } from 'firebase/firestore';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 const getMockEmail = (phone: string) => {
   // Normalize phone to clean string
@@ -13,6 +13,43 @@ const SECRET_PASSWORD = `shahryarSecretVerifyPassKey2026!`;
 
 export const storageService = {
   
+  googleLogin: async (): Promise<User> => {
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const firebaseUser = result.user;
+    
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const userDoc = await getDoc(userDocRef);
+    
+    if (userDoc.exists()) {
+      return userDoc.data() as User;
+    } else {
+      const newUser: User = {
+        id: firebaseUser.uid,
+        name: firebaseUser.displayName || `شهروند ${firebaseUser.uid.slice(-4)}`,
+        phone: '', // To be filled optionally in profile completion
+        email: firebaseUser.email || undefined,
+        joinedDate: new Date().toISOString(),
+        learnedData: [],
+        traits: []
+      };
+      
+      await setDoc(userDocRef, newUser);
+
+      // Create default planning categories for this user
+      const defaultCategories: TaskCategory[] = [
+        { id: `cat_todo_${Date.now()}`, userId: firebaseUser.uid, title: 'برای انجام', color: '#0d9488' },
+        { id: `cat_inprog_${Date.now()}`, userId: firebaseUser.uid, title: 'در حال انجام', color: '#eab308' },
+        { id: `cat_done_${Date.now()}`, userId: firebaseUser.uid, title: 'انجام شده', color: '#22c55e' }
+      ];
+      for (const cat of defaultCategories) {
+        await setDoc(doc(db, 'categories', cat.id), cat);
+      }
+
+      return newUser;
+    }
+  },
+
   checkPhoneExists: async (phone: string): Promise<boolean> => {
     try {
       const q = query(collection(db, 'users'), where('phone', '==', phone.trim()));

@@ -19,6 +19,7 @@ export const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }
   
   // Form States
   const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone || '');
   const [email, setEmail] = useState(user.email || '');
   const [bio, setBio] = useState(user.bio || '');
   const [customInstructions, setCustomInstructions] = useState(user.customInstructions || '');
@@ -88,6 +89,7 @@ export const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }
     const updatedUser: User = {
       ...user,
       name,
+      phone,
       email,
       bio,
       customInstructions
@@ -99,6 +101,7 @@ export const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }
 
   const handleCancel = () => {
     setName(user.name);
+    setPhone(user.phone || '');
     setEmail(user.email || '');
     setBio(user.bio || '');
     setCustomInstructions(user.customInstructions || '');
@@ -205,13 +208,23 @@ export const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }
             </h3>
             
             <div className="space-y-4">
-              {/* Phone (Read Only) */}
+              {/* Phone */}
               <div className="flex flex-col gap-1">
-                 <label className="text-xs text-slate-400">شماره موبایل (غیرقابل تغییر)</label>
-                 <div className="bg-slate-50 text-slate-600 px-3 py-2.5 rounded-xl text-sm font-mono flex justify-between items-center opacity-70">
-                    <span>{user.phone}</span>
-                    <span className="text-[10px] bg-slate-200 px-2 py-0.5 rounded text-slate-500">تایید شده</span>
-                 </div>
+                 <label className="text-xs text-slate-400">شماره موبایل</label>
+                 {isEditing ? (
+                    <input 
+                      type="tel" 
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                      className="bg-slate-50 border border-slate-200 text-slate-800 px-3 py-2.5 rounded-xl text-sm focus:outline-none focus:border-teal-400 text-left transition-colors"
+                      placeholder="مثال: 09131234567"
+                    />
+                 ) : (
+                    <div className="bg-slate-50 text-slate-600 px-3 py-2.5 rounded-xl text-sm font-mono flex justify-between items-center opacity-70">
+                       <span>{user.phone || 'ثبت نشده'}</span>
+                       {user.phone && <span className="text-[10px] bg-slate-200 px-2 py-0.5 rounded text-slate-500">تایید شده</span>}
+                    </div>
+                 )}
               </div>
 
               {/* Email */}
