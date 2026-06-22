@@ -347,7 +347,19 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
       onLogin(finalUser);
     } catch (err: any) {
       console.error("Standard Google SSO login error:", err);
-      setError('اتصال حساب گوگل ناموفق بود. لطفاً قفل‌شکن را فعال یا بررسی فرمایید.');
+      let errMsg = 'اتصال حساب گوگل ناموفق بود. لطفاً اینترنت و ابزار عبور از تحریم خود را بررسی نمایید.';
+      if (err.code === 'auth/popup-closed-by-user') {
+        errMsg = 'پنجره ورود گوگل بسته شد. لطفاً دوباره دکمه ورود را کلیک کرده و پنجره گوگل را تا زمان اتمام فرآیند ورود نبندید. (پیشنهاد می‌شود جهت اجرای بی‌نقص، برنامه را در تب جدید مرورگر باز کنید)';
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        errMsg = 'درخواست ورود گوگل لغو شد. لطفاً مجدداً دکمه ورود را کلیک کنید.';
+      } else if (err.code === 'auth/popup-blocked') {
+        errMsg = 'مرورگر شما نمایش پاپ‌آپ ورود گوگل را مسدود کرده است. لطفاً اجازه باز شدن Popup را به مرورگر خود بدهید.';
+      } else if (err.code === 'auth/network-request-failed') {
+        errMsg = 'خطای اتصال شبکه فایربیس رخ داد. لطفاً از اتصال اینترنت یا ابزار عبور از محدودیت‌های شبکه خود اطمینان حاصل فرمایید.';
+      } else if (err.message) {
+        errMsg = `خطا در ورود با گوگل: ${err.message}`;
+      }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
