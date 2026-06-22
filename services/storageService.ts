@@ -1,83 +1,129 @@
 import { User, ChatSession, Task, TaskCategory } from '../types';
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  deleteDoc 
+} from 'firebase/firestore';
+import { db, auth } from './firebase';
 
-async function apiRequest<T>(url: string, body: any): Promise<T> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    const err = await response.json() as any;
-    throw new Error(err.error || 'خطایی در ارتباط با سرور رخ داد.');
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
   }
-  return response.json() as Promise<T>;
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 export const storageService = {
   checkPhoneExists: async (phone: string): Promise<boolean> => {
+    const pathName = 'users';
     try {
-      const res = await apiRequest<{ exists: boolean }>('/api/auth/check-phone', { phone });
-      return res.exists;
-    } catch {
+      const q = query(collection(db, pathName), where('phone', '==', phone.trim()));
+      const querySnapshot = await getDocs(q);
+      return !querySnapshot.empty;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, pathName);
       return false;
     }
   },
 
-  firebaseLogin: async (phone: string): Promise<User> => {
-    const res = await apiRequest<{ user: User, token: string }>('/api/auth/login', { phone });
-    localStorage.setItem('firebase_id_token', res.token);
-    return res.user;
-  },
-
-  firebaseRegister: async (phone: string, name: string): Promise<User> => {
-    const res = await apiRequest<{ user: User, token: string }>('/api/auth/register', { phone, name });
-    localStorage.setItem('firebase_id_token', res.token);
-    return res.user;
-  },
-
-  googleLogin: async (mockPayload?: { id: string, name: string, email: string }): Promise<User> => {
-    // Fallback google credentials if none provided
-    const payload = mockPayload || {
-      id: `gl_${Math.random().toString(36).substring(2, 11)}`,
-      name: `کاربر گوگل ${Math.floor(Math.random() * 9000) + 1000}`,
-      email: `user.${Math.random().toString(36).substring(2, 7)}@gmail.com`
-    };
-    const res = await apiRequest<{ user: User, token: string }>('/api/auth/googleLogin', payload);
-    localStorage.setItem('firebase_id_token', res.token);
-    return res.user;
-  },
-
   getUser: async (): Promise<User | null> => {
+    const pathName = 'users';
     try {
       const cached = localStorage.getItem('shahryar_user_cache');
       if (cached) {
         const parsed = JSON.parse(cached);
-        const user = await apiRequest<User | null>('/api/db/get', { collectionName: 'users', docId: parsed.id });
-        return user;
+        const userDoc = await getDoc(doc(db, pathName, parsed.id));
+        if (userDoc.exists()) {
+          return userDoc.data() as User;
+        }
       }
-    } catch {}
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, pathName);
+    }
     return null;
   },
 
   saveUser: async (user: User) => {
-    await apiRequest('/api/db/set', { collectionName: 'users', docId: user.id, data: user });
+    const pathName = 'users';
+    try {
+      await setDoc(doc(db, pathName, user.id), user, { merge: true });
+      localStorage.setItem('shahryar_user_cache', JSON.stringify(user));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `${pathName}/${user.id}`);
+    }
   },
 
   logout: async () => {
-    localStorage.removeItem('firebase_id_token');
+    try {
+      await auth.signOut();
+    } catch {}
     localStorage.removeItem('shahryar_user_cache');
   },
 
   getSessions: async (userId: string): Promise<ChatSession[]> => {
+    const pathName = 'sessions';
     try {
-      const sessions = await apiRequest<ChatSession[]>('/api/db/query', {
-        collectionName: 'sessions',
-        field: 'userId',
-        op: '==',
-        value: userId
+      const q = query(collection(db, pathName), where('userId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      const list: ChatSession[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          title: data.title || '',
+          messages: data.messages || [],
+          createdAt: data.createdAt || 0,
+          updatedAt: data.updatedAt || 0,
+        } as ChatSession);
       });
-      return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
-    } catch {
+      return list.sort((a, b) => b.updatedAt - a.updatedAt);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, pathName);
       return [];
     }
   },
@@ -95,53 +141,98 @@ export const storageService = {
   },
 
   saveSession: async (session: ChatSession, userId: string) => {
-    const sessionWithUser = { ...session, userId };
-    await apiRequest('/api/db/set', { collectionName: 'sessions', docId: session.id, data: sessionWithUser });
+    const pathName = 'sessions';
+    try {
+      const sessionWithUser = { ...session, userId };
+      await setDoc(doc(db, pathName, session.id), sessionWithUser);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `${pathName}/${session.id}`);
+    }
   },
 
   deleteSession: async (id: string) => {
-    await apiRequest('/api/db/delete', { collectionName: 'sessions', docId: id });
+    const pathName = 'sessions';
+    try {
+      await deleteDoc(doc(db, pathName, id));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `${pathName}/${id}`);
+    }
   },
 
   getCategories: async (userId: string): Promise<TaskCategory[]> => {
+    const pathName = 'categories';
     try {
-      return await apiRequest<TaskCategory[]>('/api/db/query', {
-        collectionName: 'categories',
-        field: 'userId',
-        op: '==',
-        value: userId
+      const q = query(collection(db, pathName), where('userId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      const list: TaskCategory[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          title: data.title || '',
+          color: data.color || '',
+        } as TaskCategory);
       });
-    } catch {
+      return list;
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, pathName);
       return [];
     }
   },
 
   saveCategories: async (userId: string, categories: TaskCategory[]) => {
-    for (const cat of categories) {
-      await apiRequest('/api/db/set', { collectionName: 'categories', docId: cat.id, data: cat });
+    const pathName = 'categories';
+    try {
+      for (const cat of categories) {
+        await setDoc(doc(db, pathName, cat.id), { ...cat, userId });
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, pathName);
     }
   },
 
   getTasks: async (userId: string): Promise<Task[]> => {
+    const pathName = 'tasks';
     try {
-      const tasks = await apiRequest<Task[]>('/api/db/query', {
-        collectionName: 'tasks',
-        field: 'userId',
-        op: '==',
-        value: userId
+      const q = query(collection(db, pathName), where('userId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      const list: Task[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          userId: data.userId || '',
+          categoryId: data.categoryId || '',
+          title: data.title || '',
+          description: data.description || '',
+          status: data.status || 'todo',
+          date: data.date || '',
+          createdAt: data.createdAt || 0,
+        } as Task);
       });
-      return tasks.sort((a, b) => b.createdAt - a.createdAt);
-    } catch {
+      return list.sort((a, b) => b.createdAt - a.createdAt);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, pathName);
       return [];
     }
   },
 
   saveTask: async (userId: string, task: Task) => {
-    const taskWithUser = { ...task, userId };
-    await apiRequest('/api/db/set', { collectionName: 'tasks', docId: task.id, data: taskWithUser });
+    const pathName = 'tasks';
+    try {
+      const taskWithUser = { ...task, userId };
+      await setDoc(doc(db, pathName, task.id), taskWithUser);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `${pathName}/${task.id}`);
+    }
   },
 
   deleteTask: async (userId: string, taskId: string) => {
-    await apiRequest('/api/db/delete', { collectionName: 'tasks', docId: taskId });
+    const pathName = 'tasks';
+    try {
+      await deleteDoc(doc(db, pathName, taskId));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `${pathName}/${taskId}`);
+    }
   }
 };
