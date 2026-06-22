@@ -1,200 +1,147 @@
 import { User, ChatSession, Task, TaskCategory } from '../types';
-import { db, auth } from './firebase';
-import { collection, doc, setDoc, getDoc, getDocs, query, where, deleteDoc, orderBy } from 'firebase/firestore';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
-const getMockEmail = (phone: string) => {
-  // Normalize phone to clean string
-  const cleanPhone = phone.trim().replace(/\D/g, '');
-  return `${cleanPhone}@shahryar.local`;
-};
-
-const SECRET_PASSWORD = `shahryarSecretVerifyPassKey2026!`;
+async function apiRequest<T>(url: string, body: any): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const err = await response.json() as any;
+    throw new Error(err.error || 'خطایی در ارتباط با سرور رخ داد.');
+  }
+  return response.json() as Promise<T>;
+}
 
 export const storageService = {
-  
-  googleLogin: async (): Promise<User> => {
-    const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
-    const firebaseUser = result.user;
-    
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const userDoc = await getDoc(userDocRef);
-    
-    if (userDoc.exists()) {
-      return userDoc.data() as User;
-    } else {
-      const newUser: User = {
-        id: firebaseUser.uid,
-        name: firebaseUser.displayName || `شهروند ${firebaseUser.uid.slice(-4)}`,
-        phone: '', // To be filled optionally in profile completion
-        email: firebaseUser.email || undefined,
-        joinedDate: new Date().toISOString(),
-        learnedData: [],
-        traits: []
-      };
-      
-      await setDoc(userDocRef, newUser);
-
-      // Create default planning categories for this user
-      const defaultCategories: TaskCategory[] = [
-        { id: `cat_todo_${Date.now()}`, userId: firebaseUser.uid, title: 'برای انجام', color: '#0d9488' },
-        { id: `cat_inprog_${Date.now()}`, userId: firebaseUser.uid, title: 'در حال انجام', color: '#eab308' },
-        { id: `cat_done_${Date.now()}`, userId: firebaseUser.uid, title: 'انجام شده', color: '#22c55e' }
-      ];
-      for (const cat of defaultCategories) {
-        await setDoc(doc(db, 'categories', cat.id), cat);
-      }
-
-      return newUser;
-    }
-  },
-
   checkPhoneExists: async (phone: string): Promise<boolean> => {
     try {
-      const q = query(collection(db, 'users'), where('phone', '==', phone.trim()));
-      const snap = await getDocs(q);
-      return !snap.empty;
-    } catch (e) {
-      console.warn("Check phone exists failed: ", e);
+      const res = await apiRequest<{ exists: boolean }>('/api/auth/check-phone', { phone });
+      return res.exists;
+    } catch {
       return false;
     }
   },
 
   firebaseLogin: async (phone: string): Promise<User> => {
-    const email = getMockEmail(phone);
-    const userCredential = await signInWithEmailAndPassword(auth, email, SECRET_PASSWORD);
-    const userId = userCredential.user.uid;
-    const userDoc = await getDoc(doc(db, 'users', userId));
-    if (!userDoc.exists()) {
-       throw new Error("اطلاعات کاربری یافت نشد.");
-    }
-    return userDoc.data() as User;
+    const res = await apiRequest<{ user: User, token: string }>('/api/auth/login', { phone });
+    localStorage.setItem('firebase_id_token', res.token);
+    return res.user;
   },
 
   firebaseRegister: async (phone: string, name: string): Promise<User> => {
-    const email = getMockEmail(phone);
-    const userCredential = await createUserWithEmailAndPassword(auth, email, SECRET_PASSWORD);
-    const userId = userCredential.user.uid;
-    
-    const newUser: User = {
-        id: userId,
-        phone: phone.trim(),
-        name: name.trim(),
-        joinedDate: new Date().toISOString(),
-        learnedData: [],
-        traits: []
+    const res = await apiRequest<{ user: User, token: string }>('/api/auth/register', { phone, name });
+    localStorage.setItem('firebase_id_token', res.token);
+    return res.user;
+  },
+
+  googleLogin: async (mockPayload?: { id: string, name: string, email: string }): Promise<User> => {
+    // Fallback google credentials if none provided
+    const payload = mockPayload || {
+      id: `gl_${Math.random().toString(36).substring(2, 11)}`,
+      name: `کاربر گوگل ${Math.floor(Math.random() * 9000) + 1000}`,
+      email: `user.${Math.random().toString(36).substring(2, 7)}@gmail.com`
     };
-    
-    await setDoc(doc(db, 'users', userId), newUser);
-
-    // Create default planning categories for this user
-    const defaultCategories: TaskCategory[] = [
-      { id: `cat_todo_${Date.now()}`, userId, title: 'برای انجام', color: '#0d9488' },
-      { id: `cat_inprog_${Date.now()}`, userId, title: 'در حال انجام', color: '#eab308' },
-      { id: `cat_done_${Date.now()}`, userId, title: 'انجام شده', color: '#22c55e' }
-    ];
-    for (const cat of defaultCategories) {
-      await setDoc(doc(db, 'categories', cat.id), cat);
-    }
-
-    return newUser;
+    const res = await apiRequest<{ user: User, token: string }>('/api/auth/googleLogin', payload);
+    localStorage.setItem('firebase_id_token', res.token);
+    return res.user;
   },
 
   getUser: async (): Promise<User | null> => {
-    await new Promise(resolve => {
-        const unsubscribe = auth.onAuthStateChanged((u) => {
-            unsubscribe();
-            resolve(u);
-        }, () => {
-            unsubscribe();
-            resolve(null);
-        });
-    });
-    const uid = auth.currentUser?.uid;
-    if (!uid) return null;
-
     try {
-        const userDoc = await getDoc(doc(db, 'users', uid));
-        if (!userDoc.exists()) {
-            return null;
-        }
-        return userDoc.data() as User;
-    } catch (e) {
-        console.error("Failed to fetch user", e);
-        return null;
-    }
+      const cached = localStorage.getItem('shahryar_user_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        const user = await apiRequest<User | null>('/api/db/get', { collectionName: 'users', docId: parsed.id });
+        return user;
+      }
+    } catch {}
+    return null;
   },
 
   saveUser: async (user: User) => {
-      await setDoc(doc(db, 'users', user.id), user, { merge: true });
+    await apiRequest('/api/db/set', { collectionName: 'users', docId: user.id, data: user });
   },
 
   logout: async () => {
-      await signOut(auth);
+    localStorage.removeItem('firebase_id_token');
+    localStorage.removeItem('shahryar_user_cache');
   },
 
   getSessions: async (userId: string): Promise<ChatSession[]> => {
-      try {
-          const q = query(collection(db, 'sessions'), where('userId', '==', userId));
-          const snapshot = await getDocs(q);
-          const sessions = snapshot.docs.map(d => d.data() as ChatSession);
-          return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
-      } catch (e) { return []; }
+    try {
+      const sessions = await apiRequest<ChatSession[]>('/api/db/query', {
+        collectionName: 'sessions',
+        field: 'userId',
+        op: '==',
+        value: userId
+      });
+      return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+    } catch {
+      return [];
+    }
   },
 
   createSession: async (userId: string): Promise<ChatSession> => {
-      const newSession: ChatSession = {
-          id: Date.now().toString(),
-          title: 'گفتگوی جدید',
-          messages: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-      };
-      await storageService.saveSession(newSession, userId);
-      return newSession;
+    const newSession: ChatSession = {
+      id: Date.now().toString(),
+      title: 'گفتگوی جدید',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    await storageService.saveSession(newSession, userId);
+    return newSession;
   },
 
   saveSession: async (session: ChatSession, userId: string) => {
-      const sessionWithUser = { ...session, userId };
-      await setDoc(doc(db, 'sessions', session.id), sessionWithUser, { merge: true });
+    const sessionWithUser = { ...session, userId };
+    await apiRequest('/api/db/set', { collectionName: 'sessions', docId: session.id, data: sessionWithUser });
   },
 
   deleteSession: async (id: string) => {
-      await deleteDoc(doc(db, 'sessions', id));
+    await apiRequest('/api/db/delete', { collectionName: 'sessions', docId: id });
   },
 
-  // --- Task Management ---
-
   getCategories: async (userId: string): Promise<TaskCategory[]> => {
-      try {
-          const q = query(collection(db, 'categories'), where('userId', '==', userId));
-          const snapshot = await getDocs(q);
-          return snapshot.docs.map(d => d.data() as TaskCategory);
-      } catch (e) { return []; }
+    try {
+      return await apiRequest<TaskCategory[]>('/api/db/query', {
+        collectionName: 'categories',
+        field: 'userId',
+        op: '==',
+        value: userId
+      });
+    } catch {
+      return [];
+    }
   },
 
   saveCategories: async (userId: string, categories: TaskCategory[]) => {
-      for (const cat of categories) {
-        await setDoc(doc(db, 'categories', cat.id), cat, { merge: true });
-      }
+    for (const cat of categories) {
+      await apiRequest('/api/db/set', { collectionName: 'categories', docId: cat.id, data: cat });
+    }
   },
 
   getTasks: async (userId: string): Promise<Task[]> => {
-      try {
-          const q = query(collection(db, 'tasks'), where('userId', '==', userId));
-          const snapshot = await getDocs(q);
-          const tasks = snapshot.docs.map(d => d.data() as Task);
-          return tasks.sort((a, b) => b.createdAt - a.createdAt);
-      } catch (e) { return []; }
+    try {
+      const tasks = await apiRequest<Task[]>('/api/db/query', {
+        collectionName: 'tasks',
+        field: 'userId',
+        op: '==',
+        value: userId
+      });
+      return tasks.sort((a, b) => b.createdAt - a.createdAt);
+    } catch {
+      return [];
+    }
   },
 
   saveTask: async (userId: string, task: Task) => {
-      const taskWithUser = { ...task, userId };
-      await setDoc(doc(db, 'tasks', task.id), taskWithUser, { merge: true });
+    const taskWithUser = { ...task, userId };
+    await apiRequest('/api/db/set', { collectionName: 'tasks', docId: task.id, data: taskWithUser });
   },
 
   deleteTask: async (userId: string, taskId: string) => {
-      await deleteDoc(doc(db, 'tasks', taskId));
+    await apiRequest('/api/db/delete', { collectionName: 'tasks', docId: taskId });
   }
 };
