@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-name = "shahryar-smart-rafsanjan"
+name = "shahryar-application"
 main = "worker.ts"
 compatibility_date = "2024-04-03"
 compatibility_flags = [ "nodejs_compat" ]
