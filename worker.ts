@@ -390,7 +390,7 @@ app.get('/live', async (c) => {
 });
 
 // --- Firebase REST APIs Compatibility Helpers (Iranian ISP Sanctions/CORS Bypass) ---
-const FIREBASE_REST_BASE = "https://firestore.googleapis.com/v1/projects/shahryar-462406/databases/(default)/documents";
+const FIREBASE_REST_BASE = "https://firestore.googleapis.com/v1/projects/shahryar-462406/databases/ai-studio-f4d9a5ba-e324-4ffc-8344-039ab7000527/documents";
 const AUTH_REST_BASE = "https://identitytoolkit.googleapis.com/v1/accounts";
 const API_KEY = "AIzaSyCkPBjWmNpktCeCJ7QbkdmVFpE1zeT6eTo";
 const SECRET_PASSWORD = "shahryarSecretVerifyPassKey2026!";
@@ -502,7 +502,7 @@ const firestoreDb = {
   },
 
   query: async (collectionName: string, field: string, op: string, value: any) => {
-    const url = `https://firestore.googleapis.com/v1/projects/shahryar-462406/databases/(default)/documents:runQuery?key=${API_KEY}`;
+    const url = `https://firestore.googleapis.com/v1/projects/shahryar-462406/databases/ai-studio-f4d9a5ba-e324-4ffc-8344-039ab7000527/documents:runQuery?key=${API_KEY}`;
     const opMap: Record<string, string> = {
       '==': 'EQUAL',
       '=': 'EQUAL',
